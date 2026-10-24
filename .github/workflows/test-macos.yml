@@ -11,6 +11,10 @@ on:
         description: "Сколько минут держать рабочий стол Mac M1 в браузере (30 FPS)"
         required: false
         default: "30"
+      install_rustdesk:
+        description: "Установить и запустить RustDesk на Mac M1 (true / false)"
+        required: false
+        default: "true"
 
 jobs:
   macos-m1-test:
@@ -71,10 +75,22 @@ jobs:
             ls -la "/Applications/M&A Antidetect/M&A Launcher.app/Contents/MacOS" 2>/dev/null || true
             ls -la "/Applications/M&A Antidetect/MA DATA/runtime" 2>/dev/null || true
 
-            echo "Запуск M&A Launcher.app на рабочем столе..."
+            echo "Подтверждение подписи и запуск M&A Launcher.app..."
+            /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/M&A Launcher.app/Contents/MacOS/shardx-launcher-core" 2>/dev/null || true
+            /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/M&A Launcher.app/Contents/MacOS/shardx-launcher" 2>/dev/null || true
+            /usr/bin/codesign --force --deep --sign - "/Applications/M&A Antidetect/M&A Launcher.app" 2>/dev/null || true
+            /usr/bin/xattr -cr "/Applications/M&A Antidetect/M&A Launcher.app" 2>/dev/null || true
             open "/Applications/M&A Antidetect/M&A Launcher.app" || open "/Applications/M&A Launcher.app"
             sleep 6
             ps aux | grep -iE "shardx|M&A|launcher"
+            if [ -d "$HOME/Library/Logs/DiagnosticReports" ]; then
+              for f in "$HOME/Library/Logs/DiagnosticReports"/*; do
+                if [ -f "$f" ]; then
+                  echo "--- Crash report: $f ---"
+                  head -n 45 "$f"
+                fi
+              done
+            fi
           else
             echo "ОШИБКА: Архив с дистрибутивом не найден в Releases!"
             echo "Пожалуйста, загрузите M&A-Setup-macOS.zip в раздел Releases репозитория."
@@ -102,9 +118,27 @@ jobs:
         if: ${{ inputs.keep_alive_minutes != '0' }}
         env:
           KEEP_MINS: ${{ inputs.keep_alive_minutes }}
+          INSTALL_RUSTDESK: ${{ inputs.install_rustdesk }}
         run: |
           set +e
           caffeinate -u -t 7200 >/dev/null 2>&1 &
+
+          if [ "$INSTALL_RUSTDESK" = "true" ]; then
+            echo "Предварительная установка RustDesk ARM64..."
+            curl -sL -o /tmp/rustdesk.dmg https://github.com/rustdesk/rustdesk/releases/download/1.3.1/rustdesk-1.3.1-aarch64.dmg || \
+            curl -sL -o /tmp/rustdesk.dmg https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-aarch64.dmg
+            if [ -f /tmp/rustdesk.dmg ]; then
+              mkdir -p /tmp/rd_mnt
+              hdiutil attach /tmp/rustdesk.dmg -nobrowse -mountpoint /tmp/rd_mnt
+              cp -R /tmp/rd_mnt/RustDesk.app /Applications/ 2>/dev/null || true
+              hdiutil detach /tmp/rd_mnt 2>/dev/null || true
+              xattr -cr /Applications/RustDesk.app 2>/dev/null || true
+              echo "Запуск RustDesk..."
+              open /Applications/RustDesk.app
+              sleep 2
+              /Applications/RustDesk.app/Contents/MacOS/RustDesk --password ma123456 2>/dev/null || true
+            fi
+          fi
 
           cat << 'EOF' > /tmp/mac_fast.c
           #include <ApplicationServices/ApplicationServices.h>
@@ -328,6 +362,7 @@ jobs:
             <button class="btn" onclick="runApp('terminal')">💻 Terminal</button>
             <button class="btn" onclick="runApp('finder')">📂 Finder</button>
             <button class="btn" onclick="runApp('restart')">🔄 Рестарт M&A</button>
+            <button class="btn" style="background:#e11d48;color:#fff;border-color:#f43f5e;font-weight:600;" onclick="runApp('rustdesk')">📥 RustDesk</button>
             <div class="status">
               <span class="badge">30 FPS Stream</span>
               <span id="st">Экран: __SW__x__SH__</span>
@@ -536,16 +571,38 @@ jobs:
                       elif cmd == "app":
                           name = q.get("name", [""])[0]
                           if name == "launcher":
-                              subprocess.Popen(["/usr/bin/open", "/Applications/M&A Antidetect/M&A Launcher.app"])
+                              subprocess.Popen(["/bin/bash", "-c", """
+                              /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/M&A Launcher.app/Contents/MacOS/shardx-launcher-core" 2>/dev/null || true
+                              /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/M&A Launcher.app/Contents/MacOS/shardx-launcher" 2>/dev/null || true
+                              /usr/bin/codesign --force --deep --sign - "/Applications/M&A Antidetect/M&A Launcher.app" 2>/dev/null || true
+                              /usr/bin/open "/Applications/M&A Antidetect/M&A Launcher.app"
+                              """])
                           elif name == "safari":
                               subprocess.Popen(["/usr/bin/open", "-a", "Safari"])
                           elif name == "terminal":
                               subprocess.Popen(["/usr/bin/open", "-a", "Terminal"])
                           elif name == "finder":
                               subprocess.Popen(["/usr/bin/open", "/Applications/M&A Antidetect"])
+                          elif name == "rustdesk":
+                              subprocess.Popen(["/bin/bash", "-c", """
+                              if [ ! -d "/Applications/RustDesk.app" ]; then
+                                  curl -sL -o /tmp/rustdesk.dmg https://github.com/rustdesk/rustdesk/releases/download/1.3.1/rustdesk-1.3.1-aarch64.dmg || curl -sL -o /tmp/rustdesk.dmg https://github.com/rustdesk/rustdesk/releases/latest/download/rustdesk-aarch64.dmg
+                                  mkdir -p /tmp/rd_mnt
+                                  hdiutil attach /tmp/rustdesk.dmg -nobrowse -mountpoint /tmp/rd_mnt
+                                  cp -R /tmp/rd_mnt/RustDesk.app /Applications/ 2>/dev/null || true
+                                  hdiutil detach /tmp/rd_mnt 2>/dev/null || true
+                                  xattr -cr /Applications/RustDesk.app 2>/dev/null || true
+                              fi
+                              open /Applications/RustDesk.app
+                              """])
                           elif name == "restart":
-                              subprocess.Popen(["/usr/bin/killall", "-9", "M&A Launcher", "shardx-launcher", "shardx-launcher-core"])
-                              subprocess.Popen(["/usr/bin/open", "/Applications/M&A Antidetect/M&A Launcher.app"])
+                              subprocess.Popen(["/bin/bash", "-c", """
+                              /usr/bin/killall -9 "M&A Launcher" shardx-launcher shardx-launcher-core 2>/dev/null || true
+                              /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/M&A Launcher.app/Contents/MacOS/shardx-launcher-core" 2>/dev/null || true
+                              /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/M&A Launcher.app/Contents/MacOS/shardx-launcher" 2>/dev/null || true
+                              /usr/bin/codesign --force --deep --sign - "/Applications/M&A Antidetect/M&A Launcher.app" 2>/dev/null || true
+                              /usr/bin/open "/Applications/M&A Antidetect/M&A Launcher.app"
+                              """])
                       self.send_response(200)
                       self.send_header("Content-Type", "application/json")
                       self.end_headers()
@@ -584,6 +641,18 @@ jobs:
             echo ""
             echo "  👉  ${TUNNEL_URL}"
             echo ""
+            if [ -d "/Applications/RustDesk.app" ]; then
+              RD_ID=$(/Applications/RustDesk.app/Contents/MacOS/RustDesk --get-id 2>/dev/null || true)
+              echo "  🖥️  RUSTDESK (ПОДКЛЮЧЕНИЕ 60 FPS НАПРЯМУЮ С ВИНДЫ):"
+              if [ -n "$RD_ID" ]; then
+                echo "      ID:       ${RD_ID}"
+              else
+                echo "      ID:       (показан в окне RustDesk прямо на экране в браузере)"
+              fi
+              echo "      Пароль:   ma123456 (или сгенерированный в окне RustDesk)"
+              echo "      (Если macOS запросит Screen Recording/Accessibility — включите тумблер в браузере)"
+              echo ""
+            fi
             echo "  Плавная трансляция 30 кадров/сек без задержек и без установки программ!"
             echo "  Поддерживаются: клики, двойной клик, правый клик, drag-перетаскивание,"
             echo "  скролл колёсиком, прямой ввод с клавиатуры и быстрая вставка токена."
