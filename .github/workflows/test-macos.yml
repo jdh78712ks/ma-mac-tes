@@ -27,8 +27,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: 1. Проверка архитектуры процессора (Apple Silicon ARM64)
+      - name: 1. Настройка пароля macOS и проверка архитектуры (Apple Silicon ARM64)
         run: |
+          echo "=== Настройка пароля администратора для runner ==="
+          sudo dscl . -passwd /Users/runner ma123456 2>/dev/null || true
+          echo -e "ma123456\nma123456" | sudo passwd runner 2>/dev/null || true
+          echo "✅ Пароль администратора macOS установлен: ma123456 (пользователь: runner)"
           echo "=== Информация о системе ==="
           uname -m
           sw_vers
@@ -137,6 +141,10 @@ jobs:
               open /Applications/RustDesk.app
               sleep 2
               /Applications/RustDesk.app/Contents/MacOS/RustDesk --password ma123456 2>/dev/null || true
+              sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.carriez.rustdesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1683834047);" 2>/dev/null || true
+              sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.carriez.rustdesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1683834047);" 2>/dev/null || true
+              sqlite3 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.carriez.rustdesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1683834047);" 2>/dev/null || true
+              sqlite3 "$HOME/Library/Application Support/com.apple.TCC/TCC.db" "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.carriez.rustdesk',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1683834047);" 2>/dev/null || true
             fi
           fi
 
@@ -649,24 +657,54 @@ jobs:
               else
                 echo "      ID:       (показан в окне RustDesk прямо на экране в браузере)"
               fi
-              echo "      Пароль:   ma123456 (или сгенерированный в окне RustDesk)"
-              echo "      (Если macOS запросит Screen Recording/Accessibility — включите тумблер в браузере)"
+              echo "      Пароль RustDesk:   ma123456 (или сгенерированный в окне RustDesk)"
+              echo "      Пользователь Mac:  runner"
+              echo "      Пароль админа Mac: ma123456 (если macOS запросит подтверждение в настройках)"
+              echo "      (Если появится окно с запросом Screen Recording/Accessibility — включите тумблер)"
               echo ""
             fi
             echo "  Плавная трансляция 30 кадров/сек без задержек и без установки программ!"
             echo "  Поддерживаются: клики, двойной клик, правый клик, drag-перетаскивание,"
             echo "  скролл колёсиком, прямой ввод с клавиатуры и быстрая вставка токена."
             echo "  Сессия активна: ${KEEP_MINS} мин. (нажмите Cancel workflow, когда закончите)"
+
+            if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+              echo "## 🚀 [КЛИКНИТЕ СЮДА: ОТКРЫТЬ ЭКРАН MAC M1 В БРАУЗЕРЕ](${TUNNEL_URL})" >> "$GITHUB_STEP_SUMMARY"
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "### 🌐 Прямая ссылка: **${TUNNEL_URL}**" >> "$GITHUB_STEP_SUMMARY"
+              echo "* **FPS трансляции:** 30 кадров/сек (работает прямо во вкладке браузера без программ)" >> "$GITHUB_STEP_SUMMARY"
+              echo "* **Логин пользователя Mac:** \`runner\`" >> "$GITHUB_STEP_SUMMARY"
+              echo "* **Пароль администратора Mac:** \`ma123456\`" >> "$GITHUB_STEP_SUMMARY"
+              if [ -d "/Applications/RustDesk.app" ]; then
+                echo "" >> "$GITHUB_STEP_SUMMARY"
+                echo "### 🖥️ RustDesk (подключение 60 FPS с Windows):" >> "$GITHUB_STEP_SUMMARY"
+                echo "* **RustDesk ID:** \`${RD_ID:-показан на экране в браузере}\`" >> "$GITHUB_STEP_SUMMARY"
+                echo "* **Пароль RustDesk:** \`ma123456\`" >> "$GITHUB_STEP_SUMMARY"
+              fi
+            fi
           else
             echo "  ⚠️ Не удалось получить URL Cloudflare. Лог cloudflared:"
             cat /tmp/cf.log
+            if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+              echo "## ⚠️ Ошибка запуска туннеля Cloudflare" >> "$GITHUB_STEP_SUMMARY"
+              echo "Лог cloudflared:" >> "$GITHUB_STEP_SUMMARY"
+              echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+              cat /tmp/cf.log >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+              echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
           echo "================================================================================"
 
           TOTAL_SECS=$((KEEP_MINS * 60))
           ELAPSED=0
           while [ $ELAPSED -lt $TOTAL_SECS ]; do
-            sleep 30
-            ELAPSED=$((ELAPSED + 30))
+            sleep 15
+            ELAPSED=$((ELAPSED + 15))
+            REMAINING=$(( (TOTAL_SECS - ELAPSED) / 60 ))
+            if [ -n "$TUNNEL_URL" ]; then
+              echo "🟢 [$(date +'%H:%M:%S')] Mac M1 активен (${REMAINING} мин осталось) 👉 ${TUNNEL_URL}"
+            else
+              echo "⏳ [$(date +'%H:%M:%S')] Сессия активна (${REMAINING} мин осталось)"
+            fi
           done
           exit 0
