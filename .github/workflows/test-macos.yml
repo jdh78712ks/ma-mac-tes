@@ -53,6 +53,7 @@ jobs:
             curl -L --fail -o "/tmp/ma_installer/setup.zip" "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/M.A-Setup-macOS.zip"
           fi
 
+          # Находим скачанный zip архив
           ZIP_FOUND=$(find /tmp/ma_installer -maxdepth 1 -name "*.zip" | head -n 1)
           if [ -n "$ZIP_FOUND" ] && [ -f "$ZIP_FOUND" ]; then
             echo "Найден архив: $ZIP_FOUND ($(ls -lh "$ZIP_FOUND" | awk '{print $5}'))"
@@ -74,11 +75,27 @@ jobs:
             ls -la "/Applications/M&A Antidetect/M&A Launcher.app/Contents/MacOS" 2>/dev/null || true
             ls -la "/Applications/M&A Antidetect/MA DATA/runtime" 2>/dev/null || true
 
-            echo "Подтверждение подписи и запуск M&A Launcher.app..."
+            echo "Настройка прав TCC Accessibility и подпись всех бинарников..."
+            sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+              "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','/Applications/M&A Antidetect/M&A Launcher.app/Contents/MacOS/shardx-launcher',1,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1677721600);
+               INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','/Applications/M&A Antidetect/M&A Launcher.app/Contents/MacOS/shardx-launcher-core',1,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1677721600);
+               INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','/Applications/M&A Antidetect/MA DATA/runtime/python/bin/python3',1,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1677721600);
+               INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','/Applications/M&A Antidetect/MA DATA/runtime/python/bin/python3.11',1,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1677721600);
+               INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','/Applications/M&A Antidetect/MA DATA/runtime/ShardX-Mac-arm64/ShardX.app/Contents/MacOS/ShardX',1,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1677721600);
+               INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','/Applications/M&A Antidetect/MA DATA/runtime/ShardX-Mac-arm64/ShardX.app/Contents/MacOS/ShardX_core',1,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1677721600);
+               INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.apple.Terminal',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1677721600);" 2>/dev/null || true
+            /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/MA DATA/runtime/libshardx_hook.dylib" 2>/dev/null || true
+            /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/MA DATA/runtime/libmac_win_helper.dylib" 2>/dev/null || true
+            /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/MA DATA/runtime/ShardX-Mac-arm64/ShardX.app/Contents/MacOS/libshardx_hook.dylib" 2>/dev/null || true
+            /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/MA DATA/runtime/ShardX-Mac-arm64/ShardX.app/Contents/MacOS/ShardX_core" 2>/dev/null || true
+            /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/MA DATA/runtime/ShardX-Mac-arm64/ShardX.app/Contents/MacOS/ShardX" 2>/dev/null || true
+            /usr/bin/codesign --force --deep --sign - "/Applications/M&A Antidetect/MA DATA/runtime/ShardX-Mac-arm64/ShardX.app" 2>/dev/null || true
+            /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/MA DATA/runtime/python/bin/python3" 2>/dev/null || true
+            /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/MA DATA/runtime/python/bin/python3.11" 2>/dev/null || true
             /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/M&A Launcher.app/Contents/MacOS/shardx-launcher-core" 2>/dev/null || true
             /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/M&A Launcher.app/Contents/MacOS/shardx-launcher" 2>/dev/null || true
             /usr/bin/codesign --force --deep --sign - "/Applications/M&A Antidetect/M&A Launcher.app" 2>/dev/null || true
-            /usr/bin/xattr -cr "/Applications/M&A Antidetect/M&A Launcher.app" 2>/dev/null || true
+            /usr/bin/xattr -cr "/Applications/M&A Antidetect" 2>/dev/null || true
             open "/Applications/M&A Antidetect/M&A Launcher.app" || open "/Applications/M&A Launcher.app"
             sleep 6
             ps aux | grep -iE "shardx|M&A|launcher"
@@ -92,6 +109,7 @@ jobs:
             fi
           else
             echo "ОШИБКА: Архив с дистрибутивом не найден в Releases!"
+            echo "Пожалуйста, загрузите M&A-Setup-macOS.zip в раздел Releases репозитория."
             exit 1
           fi
           exit 0
@@ -124,139 +142,148 @@ jobs:
           #include <ApplicationServices/ApplicationServices.h>
           #include <ImageIO/ImageIO.h>
           #include <CoreServices/CoreServices.h>
+          #include <unistd.h>
           #include <stdio.h>
           #include <stdlib.h>
           #include <string.h>
-          #include <unistd.h>
+          #include <pthread.h>
 
-          void send_click(CGPoint pt, CGMouseButton btn, CGEventType dn_type, CGEventType up_type) {
-              CGEventRef m = CGEventCreateMouseEvent(NULL, kCGEventMouseMoved, pt, kCGMouseButtonLeft);
-              if (m) { CGEventPost(kCGHIDEventTap, m); CFRelease(m); usleep(20000); }
-              CGEventRef dn = CGEventCreateMouseEvent(NULL, dn_type, pt, btn);
-              CGEventRef up = CGEventCreateMouseEvent(NULL, up_type, pt, btn);
-              if (dn) { CGEventPost(kCGHIDEventTap, dn); CFRelease(dn); }
-              usleep(40000);
-              if (up) { CGEventPost(kCGHIDEventTap, up); CFRelease(up); }
-          }
+          static int g_stream_running = 1;
+          static float g_quality = 0.65f;
 
-          void type_utf8(const char *utf8_str) {
-              CFStringRef str = CFStringCreateWithCString(NULL, utf8_str, kCFStringEncodingUTF8);
-              if (!str) return;
-              CFIndex len = CFStringGetLength(str);
-              UniChar buf[len];
-              CFStringGetCharacters(str, CFRangeMake(0, len), buf);
-              for (CFIndex i = 0; i < len; i++) {
-                  CGEventRef dn = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)0, true);
-                  CGEventRef up = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)0, false);
-                  CGEventKeyboardSetUnicodeString(dn, 1, &buf[i]);
-                  CGEventKeyboardSetUnicodeString(up, 1, &buf[i]);
-                  CGEventPost(kCGHIDEventTap, dn);
-                  usleep(15000);
-                  CGEventPost(kCGHIDEventTap, up);
-                  usleep(15000);
-                  CFRelease(dn);
-                  CFRelease(up);
-              }
-              CFRelease(str);
-          }
-
-          void save_display_jpeg(CGDirectDisplayID d, const char *out_path) {
-              CGImageRef img = CGDisplayCreateImage(d);
+          static void capture_frame_fast(const char* target_file) {
+              CGImageRef img = CGDisplayCreateImage(CGMainDisplayID());
               if (!img) return;
-              CFStringRef path_cf = CFStringCreateWithCString(NULL, out_path, kCFStringEncodingUTF8);
-              CFURLRef url = CFURLCreateWithFileSystemPath(NULL, path_cf, kCFURLPOSIXPathStyle, false);
-              CGImageDestinationRef dest = CGImageDestinationCreateWithURL(url, (CFStringRef)CFSTR("public.jpeg"), 1, NULL);
-              if (dest) {
-                  float q = 0.55f;
-                  CFNumberRef q_num = CFNumberCreate(NULL, kCFNumberFloatType, &q);
-                  CFStringRef keys[] = { kCGImageDestinationLossyCompressionQuality };
-                  CFTypeRef values[] = { q_num };
-                  CFDictionaryRef opts = CFDictionaryCreate(NULL, (const void **)keys, (const void **)values, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-                  CGImageDestinationAddImage(dest, img, opts);
-                  CGImageDestinationFinalize(dest);
-                  CFRelease(dest);
-                  CFRelease(opts);
-                  CFRelease(q_num);
+
+              char tmp_file[512];
+              snprintf(tmp_file, sizeof(tmp_file), "%s.tmp", target_file);
+              CFURLRef url = CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8*)tmp_file, strlen(tmp_file), false);
+              if (url) {
+                  CGImageDestinationRef dest = CGImageDestinationCreateWithURL(url, kUTTypeJPEG, 1, NULL);
+                  if (dest) {
+                      CFStringRef key = kCGImageDestinationLossyCompressionQuality;
+                      CFNumberRef val = CFNumberCreate(NULL, kCFNumberFloatType, &g_quality);
+                      CFDictionaryRef opts = CFDictionaryCreate(NULL, (const void**)&key, (const void**)&val, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+
+                      CGImageDestinationAddImage(dest, img, opts);
+                      CGImageDestinationFinalize(dest);
+
+                      CFRelease(opts);
+                      CFRelease(val);
+                      CFRelease(dest);
+                      rename(tmp_file, target_file);
+                  }
+                  CFRelease(url);
               }
-              if (url) CFRelease(url);
-              if (path_cf) CFRelease(path_cf);
               CGImageRelease(img);
           }
 
-          int main(int argc, char **argv) {
-              if (argc < 2) return 1;
-              const char *cmd = argv[1];
-              CGDirectDisplayID main_d = CGMainDisplayID();
+          static void* stream_worker(void* arg) {
+              const char* out_path = (const char*)arg;
+              while (g_stream_running) {
+                  capture_frame_fast(out_path);
+                  usleep(33000); // ~30 FPS (33ms)
+              }
+              return NULL;
+          }
+
+          static void post_mouse(CGEventType type, double x, double y, CGMouseButton btn, int click_count) {
+              CGPoint pt = CGPointMake(x, y);
+              CGEventRef ev = CGEventCreateMouseEvent(NULL, type, pt, btn);
+              if (ev) {
+                  if (click_count > 0) CGEventSetIntegerValueField(ev, kCGMouseEventClickState, click_count);
+                  CGEventPost(kCGHIDEventTap, ev);
+                  CFRelease(ev);
+              }
+          }
+
+          static void type_utf8(const char* s) {
+              while (*s) {
+                  unsigned char c = (unsigned char)*s++;
+                  UniChar u = (UniChar)c;
+                  CGEventRef dn = CGEventCreateKeyboardEvent(NULL, 0, true);
+                  CGEventRef up = CGEventCreateKeyboardEvent(NULL, 0, false);
+                  if (dn && up) {
+                      CGEventKeyboardSetUnicodeString(dn, 1, &u);
+                      CGEventKeyboardSetUnicodeString(up, 1, &u);
+                      CGEventPost(kCGHIDEventTap, dn);
+                      usleep(8000);
+                      CGEventPost(kCGHIDEventTap, up);
+                      usleep(8000);
+                  }
+                  if (dn) CFRelease(dn);
+                  if (up) CFRelease(up);
+              }
+          }
+
+          int main(int argc, char** argv) {
+              if (argc < 2) return 0;
+              const char* cmd = argv[1];
+
               if (strcmp(cmd, "daemon") == 0 && argc >= 3) {
-                  const char *p = argv[2];
-                  char tmp[256];
-                  snprintf(tmp, sizeof(tmp), "%s.tmp.jpg", p);
-                  while (1) {
-                      save_display_jpeg(main_d, tmp);
-                      rename(tmp, p);
-                      usleep(33333);
-                  }
+                  stream_worker((void*)argv[2]);
                   return 0;
-              } else if (strcmp(cmd, "size") == 0) {
-                  size_t w = CGDisplayPixelsWide(main_d);
-                  size_t h = CGDisplayPixelsHigh(main_d);
-                  printf("%zu %zu\n", w, h);
+              }
+              if (strcmp(cmd, "size") == 0) {
+                  CGDirectDisplayID d = CGMainDisplayID();
+                  printf("%zu %zu\n", CGDisplayPixelsWide(d), CGDisplayPixelsHigh(d));
                   return 0;
-              } else if (strcmp(cmd, "click") == 0 && argc >= 4) {
-                  CGPoint pt = CGPointMake(atof(argv[2]), atof(argv[3]));
-                  send_click(pt, kCGMouseButtonLeft, kCGEventLeftMouseDown, kCGEventLeftMouseUp);
+              }
+              if (strcmp(cmd, "click") == 0 && argc >= 4) {
+                  double x = atof(argv[2]), y = atof(argv[3]);
+                  post_mouse(kCGEventMouseMoved, x, y, kCGMouseButtonLeft, 0);
+                  usleep(10000);
+                  post_mouse(kCGEventLeftMouseDown, x, y, kCGMouseButtonLeft, 1);
+                  usleep(25000);
+                  post_mouse(kCGEventLeftMouseUp, x, y, kCGMouseButtonLeft, 1);
+              } else if (strcmp(cmd, "dblclick") == 0 && argc >= 4) {
+                  double x = atof(argv[2]), y = atof(argv[3]);
+                  post_mouse(kCGEventMouseMoved, x, y, kCGMouseButtonLeft, 0);
+                  usleep(10000);
+                  post_mouse(kCGEventLeftMouseDown, x, y, kCGMouseButtonLeft, 1);
+                  usleep(20000);
+                  post_mouse(kCGEventLeftMouseUp, x, y, kCGMouseButtonLeft, 1);
+                  usleep(25000);
+                  post_mouse(kCGEventLeftMouseDown, x, y, kCGMouseButtonLeft, 2);
+                  usleep(20000);
+                  post_mouse(kCGEventLeftMouseUp, x, y, kCGMouseButtonLeft, 2);
               } else if (strcmp(cmd, "rclick") == 0 && argc >= 4) {
-                  CGPoint pt = CGPointMake(atof(argv[2]), atof(argv[3]));
-                  send_click(pt, kCGMouseButtonRight, kCGEventRightMouseDown, kCGEventRightMouseUp);
-              } else if (strcmp(cmd, "dclick") == 0 && argc >= 4) {
-                  CGPoint pt = CGPointMake(atof(argv[2]), atof(argv[3]));
-                  CGEventRef dn1 = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseDown, pt, kCGMouseButtonLeft);
-                  CGEventRef up1 = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseUp, pt, kCGMouseButtonLeft);
-                  CGEventRef dn2 = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseDown, pt, kCGMouseButtonLeft);
-                  CGEventRef up2 = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseUp, pt, kCGMouseButtonLeft);
-                  CGEventSetIntegerValueField(dn1, kCGMouseEventClickState, 1);
-                  CGEventSetIntegerValueField(up1, kCGMouseEventClickState, 1);
-                  CGEventSetIntegerValueField(dn2, kCGMouseEventClickState, 2);
-                  CGEventSetIntegerValueField(up2, kCGMouseEventClickState, 2);
-                  CGEventPost(kCGHIDEventTap, dn1); usleep(20000);
-                  CGEventPost(kCGHIDEventTap, up1); usleep(30000);
-                  CGEventPost(kCGHIDEventTap, dn2); usleep(20000);
-                  CGEventPost(kCGHIDEventTap, up2);
-                  CFRelease(dn1); CFRelease(up1); CFRelease(dn2); CFRelease(up2);
+                  double x = atof(argv[2]), y = atof(argv[3]);
+                  post_mouse(kCGEventMouseMoved, x, y, kCGMouseButtonRight, 0);
+                  usleep(10000);
+                  post_mouse(kCGEventRightMouseDown, x, y, kCGMouseButtonRight, 1);
+                  usleep(25000);
+                  post_mouse(kCGEventRightMouseUp, x, y, kCGMouseButtonRight, 1);
               } else if (strcmp(cmd, "drag") == 0 && argc >= 6) {
-                  CGPoint p1 = CGPointMake(atof(argv[2]), atof(argv[3]));
-                  CGPoint p2 = CGPointMake(atof(argv[4]), atof(argv[5]));
-                  CGEventRef m1 = CGEventCreateMouseEvent(NULL, kCGEventMouseMoved, p1, kCGMouseButtonLeft);
-                  CGEventRef dn = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseDown, p1, kCGMouseButtonLeft);
-                  if (m1) { CGEventPost(kCGHIDEventTap, m1); CFRelease(m1); usleep(20000); }
-                  if (dn) { CGEventPost(kCGHIDEventTap, dn); CFRelease(dn); usleep(40000); }
-                  int steps = 10;
-                  for (int i = 1; i <= steps; i++) {
-                      CGPoint cur = CGPointMake(p1.x + (p2.x - p1.x)*i/steps, p1.y + (p2.y - p1.y)*i/steps);
-                      CGEventRef drg = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseDragged, cur, kCGMouseButtonLeft);
-                      if (drg) { CGEventPost(kCGHIDEventTap, drg); CFRelease(drg); usleep(15000); }
+                  double x1 = atof(argv[2]), y1 = atof(argv[3]), x2 = atof(argv[4]), y2 = atof(argv[5]);
+                  post_mouse(kCGEventMouseMoved, x1, y1, kCGMouseButtonLeft, 0);
+                  usleep(10000);
+                  post_mouse(kCGEventLeftMouseDown, x1, y1, kCGMouseButtonLeft, 1);
+                  for (int i = 1; i <= 12; i++) {
+                      double cx = x1 + (x2 - x1) * i / 12.0;
+                      double cy = y1 + (y2 - y1) * i / 12.0;
+                      usleep(8000);
+                      post_mouse(kCGEventLeftMouseDragged, cx, cy, kCGMouseButtonLeft, 1);
                   }
-                  CGEventRef up = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseUp, p2, kCGMouseButtonLeft);
-                  if (up) { CGEventPost(kCGHIDEventTap, up); CFRelease(up); }
+                  usleep(10000);
+                  post_mouse(kCGEventLeftMouseUp, x2, y2, kCGMouseButtonLeft, 1);
               } else if (strcmp(cmd, "scroll") == 0 && argc >= 5) {
-                  CGPoint pt = CGPointMake(atof(argv[2]), atof(argv[3]));
+                  double x = atof(argv[2]), y = atof(argv[3]);
                   int dy = atoi(argv[4]);
-                  CGEventRef scr = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitLine, 1, dy);
-                  if (scr) {
-                      CGEventSetLocation(scr, pt);
-                      CGEventPost(kCGHIDEventTap, scr);
-                      CFRelease(scr);
-                  }
+                  post_mouse(kCGEventMouseMoved, x, y, kCGMouseButtonLeft, 0);
+                  CGEventRef sev = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitLine, 1, dy);
+                  if (sev) { CGEventPost(kCGHIDEventTap, sev); CFRelease(sev); }
               } else if (strcmp(cmd, "key") == 0 && argc >= 3) {
-                  CGKeyCode kc = (CGKeyCode)atoi(argv[2]);
-                  CGEventRef dn = CGEventCreateKeyboardEvent(NULL, kc, true);
-                  CGEventRef up = CGEventCreateKeyboardEvent(NULL, kc, false);
-                  if (dn) { CGEventPost(kCGHIDEventTap, dn); usleep(20000); CFRelease(dn); }
+                  int kc = atoi(argv[2]);
+                  CGEventRef dn = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kc, true);
+                  CGEventRef up = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kc, false);
+                  if (dn) { CGEventPost(kCGHIDEventTap, dn); CFRelease(dn); }
+                  usleep(15000);
                   if (up) { CGEventPost(kCGHIDEventTap, up); CFRelease(up); }
               } else if (strcmp(cmd, "cmdkey") == 0 && argc >= 3) {
-                  CGKeyCode kc = (CGKeyCode)atoi(argv[2]);
-                  CGEventRef dn = CGEventCreateKeyboardEvent(NULL, kc, true);
-                  CGEventRef up = CGEventCreateKeyboardEvent(NULL, kc, false);
+                  int kc = atoi(argv[2]);
+                  CGEventRef dn = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kc, true);
+                  CGEventRef up = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kc, false);
                   if (dn && up) {
                       CGEventSetFlags(dn, kCGEventFlagMaskCommand);
                       CGEventSetFlags(up, kCGEventFlagMaskCommand);
@@ -276,6 +303,7 @@ jobs:
           echo "Компиляция высокоскоростного движка ввода и захвата экрана (CoreGraphics 30 FPS)..."
           clang -O3 -framework ApplicationServices -framework ImageIO -framework CoreServices /tmp/mac_fast.c -o /tmp/mac_fast
 
+          # Запуск демона захвата 30 FPS в фоне
           nohup /tmp/mac_fast daemon /tmp/live_frame.jpg >/dev/null 2>&1 &
 
           cat << 'EOF' > /tmp/web_desk.py
@@ -301,32 +329,36 @@ jobs:
             body { margin: 0; background: #0b0d14; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
             .toolbar { background: #151824; padding: 6px 14px; display: flex; gap: 8px; align-items: center; border-bottom: 1px solid #23293a; flex-wrap: wrap; z-index: 10; }
             .toolbar b { color: #d9ff66; font-size: 14px; margin-right: 6px; letter-spacing: 0.5px; }
-            .toolbar input { background: #0b0d14; color: #fff; border: 1px solid #334155; border-radius: 6px; padding: 6px 10px; width: 260px; font-size: 13px; outline: none; }
+            .toolbar input { background: #0b0d14; color: #fff; border: 1px solid #334155; border-radius: 6px; padding: 6px 10px; width: 190px; font-size: 13px; outline: none; }
             .toolbar input:focus { border-color: #d9ff66; }
-            .btn { background: #222738; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 6px 11px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.15s; }
+            .btn { background: #222738; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px; padding: 6px 11px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all 0.15s; user-select: none; }
             .btn:hover { background: #2f364c; border-color: #94a3b8; }
             .btn.primary { background: #d9ff66; color: #0b0f19; border-color: #d9ff66; font-weight: 700; }
             .btn.primary:hover { background: #c8f542; }
             .btn.accent { background: #4f46e5; color: #fff; border-color: #6366f1; }
             .btn.accent:hover { background: #4338ca; }
+            .btn.cyan { background: #0284c7; color: #fff; border-color: #38bdf8; }
+            .btn.cyan:hover { background: #0369a1; }
             .screen-wrap { flex: 1; display: flex; justify-content: center; align-items: center; overflow: auto; position: relative; user-select: none; background: #000; }
             #screen { max-width: 100%; max-height: 100%; object-fit: contain; cursor: crosshair; box-shadow: 0 10px 40px rgba(0,0,0,0.8); }
             .status { margin-left: auto; font-size: 12px; color: #94a3b8; display: flex; gap: 12px; align-items: center; }
             .badge { background: #1e293b; color: #38bdf8; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+            .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px); background: #1e293b; color: #38bdf8; border: 1px solid #38bdf8; padding: 8px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; box-shadow: 0 8px 24px rgba(0,0,0,0.7); opacity: 0; pointer-events: none; transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1); z-index: 9999; }
+            .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
           </style>
           </head>
           <body>
           <div class="toolbar">
-            <b> Mac M1 (ARM64)</b>
-            <input id="txt" type="text" placeholder="Текст / Токен / Логин / Пароль..." />
-            <button class="btn primary" onclick="sendText()">Ввести текст</button>
-            <button class="btn accent" onclick="pasteText()">Вставить (Cmd+V)</button>
+            <b> Mac M1</b>
+            <button class="btn primary" onclick="directPasteFromClipboard()" title="Вставить прямо из буфера обмена вашего ПК (Ctrl+V)">📋 Вставить буфер (Ctrl+V)</button>
+            <button class="btn cyan" onclick="copyFromRemoteMac()" title="Скопировать выделенное на Mac в буфер вашего ПК (Ctrl+C)">📋 Забрать с Mac (Ctrl+C)</button>
+            <input id="txt" type="text" placeholder="Текст / Токен..." />
+            <button class="btn" onclick="sendText()">Ввод</button>
             <button class="btn" onclick="sendKey(36)">Enter ↵</button>
             <button class="btn" onclick="sendKey(51)">⌫</button>
             <button class="btn" onclick="sendKey(48)">Tab ⇥</button>
             <button class="btn" onclick="sendKey(53)">Esc</button>
             <button class="btn" onclick="sendCmdKey(0)">Cmd+A</button>
-            <button class="btn" onclick="sendCmdKey(8)">Cmd+C</button>
             <button class="btn" onclick="runApp('launcher')">🚀 M&A Launcher</button>
             <button class="btn" onclick="runApp('safari')">🌐 Safari</button>
             <button class="btn" onclick="runApp('terminal')">💻 Terminal</button>
@@ -340,11 +372,24 @@ jobs:
           <div class="screen-wrap">
             <img id="screen" src="/stream" draggable="false" />
           </div>
+          <div id="toast" class="toast"></div>
           <script>
           const SW = __SW__, SH = __SH__;
           const img = document.getElementById('screen');
           const st = document.getElementById('st');
+          const toastEl = document.getElementById('toast');
+          let toastTimer = null;
+          let lastPasteTs = 0;
           let dragStart = null;
+
+          function showToast(msg) {
+            toastEl.textContent = msg;
+            toastEl.classList.add('show');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(function() {
+              toastEl.classList.remove('show');
+            }, 2600);
+          }
 
           img.onerror = function() {
             setTimeout(function() {
@@ -360,29 +405,32 @@ jobs:
           }
 
           img.addEventListener('mousedown', function(e) {
-            if (e.button === 0) {
-              dragStart = getCoords(e);
-            }
+            if (e.button === 0) dragStart = getCoords(e);
           });
 
           img.addEventListener('mouseup', function(e) {
+            const c = getCoords(e);
             if (e.button === 0 && dragStart) {
-              const end = getCoords(e);
-              const dist = Math.hypot(end.x - dragStart.x, end.y - dragStart.y);
-              if (dist > 8) {
-                fetch('/api?cmd=drag&x1=' + dragStart.x + '&y1=' + dragStart.y1 + '&x2=' + end.x + '&y2=' + end.y);
-                st.textContent = 'Drag: (' + dragStart.x + ',' + dragStart.y + ') -> (' + end.x + ',' + end.y + ')';
-              } else {
-                fetch('/api?cmd=click&x=' + end.x + '&y=' + end.y);
-                st.textContent = 'Click: (' + end.x + ', ' + end.y + ')';
+              const dx = Math.abs(c.x - dragStart.x);
+              const dy = Math.abs(c.y - dragStart.y);
+              if (dx > 8 || dy > 8) {
+                fetch('/api?cmd=drag&x1=' + dragStart.x + '&y1=' + dragStart.y + '&x2=' + c.x + '&y2=' + c.y);
+                st.textContent = 'Drag: ' + dragStart.x + ',' + dragStart.y + ' -> ' + c.x + ',' + c.y;
+                dragStart = null;
+                return;
               }
-              dragStart = null;
+            }
+            dragStart = null;
+            if (e.button === 0) {
+              fetch('/api?cmd=click&x=' + c.x + '&y=' + c.y);
+              st.textContent = 'Click: (' + c.x + ', ' + c.y + ')';
             }
           });
 
           img.addEventListener('dblclick', function(e) {
+            e.preventDefault();
             const c = getCoords(e);
-            fetch('/api?cmd=dclick&x=' + c.x + '&y=' + c.y);
+            fetch('/api?cmd=dblclick&x=' + c.x + '&y=' + c.y);
             st.textContent = 'Double Click: (' + c.x + ', ' + c.y + ')';
           });
 
@@ -400,21 +448,81 @@ jobs:
             fetch('/api?cmd=scroll&x=' + c.x + '&y=' + c.y + '&dy=' + dy);
           }, { passive: false });
 
+          function sendDirectPaste(text) {
+            if (!text) return;
+            fetch('/api/paste', {
+              method: 'POST',
+              headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+              body: text
+            }).then(function(res) {
+              const preview = text.length > 25 ? text.slice(0, 25) + '…' : text;
+              showToast('📋 Вставлено на Mac: ' + preview + ' (' + text.length + ' симв.)');
+              st.textContent = 'Вставка: ' + preview;
+            }).catch(function(err) {
+              showToast('❌ Ошибка вставки: ' + err);
+            });
+          }
+
+          function safePaste(text) {
+            const now = Date.now();
+            if (now - lastPasteTs < 350) return;
+            lastPasteTs = now;
+            sendDirectPaste(text);
+          }
+
+          async function directPasteFromClipboard() {
+            if (navigator.clipboard && navigator.clipboard.readText) {
+              try {
+                const t = await navigator.clipboard.readText();
+                if (t) {
+                  safePaste(t);
+                  return;
+                }
+              } catch (err) {
+                console.warn('Clipboard read error:', err);
+              }
+            }
+            const manual = prompt('Вставьте текст из буфера обмена (Ctrl+V):');
+            if (manual) {
+              safePaste(manual);
+            }
+          }
+
+          async function fetchRemoteClipboard(showNotification) {
+            try {
+              const res = await fetch('/api?cmd=get_clip');
+              const data = await res.json();
+              const clip = data.clip || '';
+              if (!clip) {
+                if (showNotification) showToast('ℹ Буфер Mac пуст');
+                return;
+              }
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(clip);
+                const preview = clip.length > 25 ? clip.slice(0, 25) + '…' : clip;
+                showToast('📋 Скопировано в ваш буфер: ' + preview + ' (' + clip.length + ' симв.)');
+              } else {
+                prompt('Буфер с Mac (Ctrl+C для копирования):', clip);
+              }
+            } catch (err) {
+              if (showNotification) showToast('❌ Ошибка буфера Mac: ' + err);
+            }
+          }
+
+          function copyFromRemoteMac() {
+            fetch('/api?cmd=cmdkey&kc=8').then(function() {
+              setTimeout(function() {
+                fetchRemoteClipboard(true);
+              }, 200);
+            });
+          }
+
           function sendText() {
             const el = document.getElementById('txt');
             const v = el.value;
             if (!v) return;
             fetch('/api?cmd=text&val=' + encodeURIComponent(v));
-            st.textContent = 'Ввод текста: ' + v.slice(0, 15) + '...';
-            el.value = '';
-          }
-
-          function pasteText() {
-            const el = document.getElementById('txt');
-            const v = el.value;
-            if (!v) return;
-            fetch('/api?cmd=paste&val=' + encodeURIComponent(v));
-            st.textContent = 'Вставка буфера (Cmd+V)';
+            st.textContent = 'Ввод: ' + v.slice(0, 15) + '...';
             el.value = '';
           }
 
@@ -439,6 +547,73 @@ jobs:
               sendText();
             }
           });
+
+          // Native clipboard paste event
+          window.addEventListener('paste', function(e) {
+            if (document.activeElement === document.getElementById('txt')) return;
+            e.preventDefault();
+            let text = '';
+            if (e.clipboardData && e.clipboardData.getData) {
+              text = e.clipboardData.getData('text/plain');
+            }
+            if (text) {
+              safePaste(text);
+            } else if (navigator.clipboard && navigator.clipboard.readText) {
+              navigator.clipboard.readText().then(function(t) {
+                if (t) safePaste(t);
+              }).catch(function() {});
+            }
+          });
+
+          // Global keyboard shortcuts
+          window.addEventListener('keydown', function(e) {
+            if (document.activeElement === document.getElementById('txt')) return;
+
+            // Ctrl+V or Cmd+V -> direct paste
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
+              e.preventDefault();
+              directPasteFromClipboard();
+              return;
+            }
+            // Ctrl+C or Cmd+C -> copy from remote Mac into PC clipboard
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+              e.preventDefault();
+              copyFromRemoteMac();
+              return;
+            }
+            // Ctrl+X or Cmd+X -> cut on remote Mac into PC clipboard
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'x' || e.key === 'X')) {
+              e.preventDefault();
+              fetch('/api?cmd=cmdkey&kc=7').then(function() {
+                setTimeout(function() { fetchRemoteClipboard(true); }, 200);
+              });
+              return;
+            }
+            // Ctrl+A or Cmd+A -> select all
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+              e.preventDefault();
+              sendCmdKey(0);
+              return;
+            }
+            // Ctrl+Z or Cmd+Z -> undo
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+              e.preventDefault();
+              sendCmdKey(6);
+              return;
+            }
+
+            if (e.key === 'Enter') { e.preventDefault(); sendKey(36); }
+            else if (e.key === 'Backspace') { e.preventDefault(); sendKey(51); }
+            else if (e.key === 'Tab') { e.preventDefault(); sendKey(48); }
+            else if (e.key === 'Escape') { e.preventDefault(); sendKey(53); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); sendKey(126); }
+            else if (e.key === 'ArrowDown') { e.preventDefault(); sendKey(125); }
+            else if (e.key === 'ArrowLeft') { e.preventDefault(); sendKey(123); }
+            else if (e.key === 'ArrowRight') { e.preventDefault(); sendKey(124); }
+            else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+              fetch('/api?cmd=text&val=' + encodeURIComponent(e.key));
+            }
+          });
           </script>
           </body>
           </html>
@@ -448,81 +623,149 @@ jobs:
               def log_message(self, format, *args):
                   pass
 
+              def do_OPTIONS(self):
+                  self.send_response(200)
+                  self.send_header("Access-Control-Allow-Origin", "*")
+                  self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                  self.send_header("Access-Control-Allow-Headers", "Content-Type")
+                  self.end_headers()
+
+              def do_POST(self):
+                  u = urlparse(self.path)
+                  if u.path in ("/api/paste", "/api"):
+                      length = int(self.headers.get('Content-Length', 0))
+                      body = self.rfile.read(length).decode('utf-8', errors='replace')
+                      text = body
+                      try:
+                          j = json.loads(body)
+                          if isinstance(j, dict) and 'text' in j:
+                              text = j['text']
+                      except Exception:
+                          pass
+                      if text:
+                          try:
+                              p = subprocess.Popen(["/usr/bin/pbcopy"], stdin=subprocess.PIPE)
+                              p.communicate(text.encode("utf-8"))
+                              time.sleep(0.02)
+                              subprocess.Popen(["/tmp/mac_fast", "cmdkey", "9"])
+                          except Exception:
+                              pass
+                      self.send_response(200)
+                      self.send_header("Content-Type", "application/json; charset=utf-8")
+                      self.send_header("Access-Control-Allow-Origin", "*")
+                      self.end_headers()
+                      self.wfile.write(b'{"ok":true}')
+                      return
+                  self.send_response(404)
+                  self.end_headers()
+
               def do_GET(self):
-                  pr = urlparse(self.path)
-                  if pr.path in ("/", "/index.html"):
+                  u = urlparse(self.path)
+                  if u.path in ("/", "/index.html", "/vnc.html"):
+                      data = HTML_PAGE.encode("utf-8")
                       self.send_response(200)
                       self.send_header("Content-Type", "text/html; charset=utf-8")
+                      self.send_header("Content-Length", str(len(data)))
                       self.end_headers()
-                      self.wfile.write(HTML_PAGE.encode("utf-8"))
-                  elif pr.path == "/stream":
+                      self.wfile.write(data)
+                  elif u.path == "/stream":
                       self.send_response(200)
-                      self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+                      self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=--frame")
                       self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
                       self.send_header("Pragma", "no-cache")
-                      self.send_header("Expires", "0")
+                      self.send_header("Connection", "close")
                       self.end_headers()
-                      last_mtime = 0
+                      last_mtime = 0.0
+                      while True:
+                          try:
+                              if os.path.exists("/tmp/live_frame.jpg"):
+                                  mt = os.path.getmtime("/tmp/live_frame.jpg")
+                                  if mt > last_mtime:
+                                      last_mtime = mt
+                                      with open("/tmp/live_frame.jpg", "rb") as f:
+                                          data = f.read()
+                                      if data and len(data) > 1000:
+                                          self.wfile.write(b"--frame\r\n")
+                                          self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                                          self.wfile.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+                                          self.wfile.write(data)
+                                          self.wfile.write(b"\r\n")
+                                          self.wfile.flush()
+                                  time.sleep(0.033) # 30 FPS
+                          except Exception:
+                              break
+                  elif u.path == "/frame.jpg":
+                      jpg = b""
                       try:
-                          while True:
-                              p = "/tmp/live_frame.jpg"
-                              if os.path.exists(p):
-                                  m = os.path.getmtime(p)
-                                  if m != last_mtime:
-                                      last_mtime = m
-                                      with open(p, "rb") as f:
-                                          jpg = f.read()
-                                      header = (
-                                          b"--frame\r\n"
-                                          b"Content-Type: image/jpeg\r\n"
-                                          b"Content-Length: " + str(len(jpg)).encode() + b"\r\n\r\n"
-                                      )
-                                      self.wfile.write(header + jpg + b"\r\n")
-                              time.sleep(0.033)
-                      except (BrokenPipeError, ConnectionResetError):
+                          if os.path.exists("/tmp/live_frame.jpg"):
+                              with open("/tmp/live_frame.jpg", "rb") as f:
+                                  jpg = f.read()
+                      except Exception:
                           pass
-                  elif pr.path == "/api":
-                      qs = parse_qs(pr.query)
-                      cmd = qs.get("cmd", [""])[0]
-                      if cmd in ("click", "rclick", "dclick"):
-                          x = qs.get("x", ["0"])[0]
-                          y = qs.get("y", ["0"])[0]
-                          subprocess.Popen(["/tmp/mac_fast", cmd, x, y])
+                      self.send_response(200)
+                      self.send_header("Content-Type", "image/jpeg")
+                      self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+                      self.send_header("Content-Length", str(len(jpg)))
+                      self.end_headers()
+                      if jpg: self.wfile.write(jpg)
+                  elif u.path == "/api":
+                      q = parse_qs(u.query)
+                      cmd = q.get("cmd", [""])[0]
+                      if cmd in ("get_clip", "clipboard"):
+                          clip = ""
+                          try:
+                              p = subprocess.Popen(["/usr/bin/pbpaste"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                              out, _ = p.communicate(timeout=2)
+                              clip = out.decode("utf-8", errors="replace")
+                          except Exception:
+                              clip = ""
+                          data = json.dumps({"ok": True, "clip": clip}).encode("utf-8")
+                          self.send_response(200)
+                          self.send_header("Content-Type", "application/json; charset=utf-8")
+                          self.send_header("Access-Control-Allow-Origin", "*")
+                          self.send_header("Content-Length", str(len(data)))
+                          self.end_headers()
+                          self.wfile.write(data)
+                          return
+                      elif cmd in ("click", "dblclick", "rclick"):
+                          subprocess.Popen(["/tmp/mac_fast", cmd, q.get("x", ["0"])[0], q.get("y", ["0"])[0]])
                       elif cmd == "drag":
-                          x1 = qs.get("x1", ["0"])[0]
-                          y1 = qs.get("y1", ["0"])[0]
-                          x2 = qs.get("x2", ["0"])[0]
-                          y2 = qs.get("y2", ["0"])[0]
-                          subprocess.Popen(["/tmp/mac_fast", "drag", x1, y1, x2, y2])
+                          subprocess.Popen(["/tmp/mac_fast", "drag", q.get("x1", ["0"])[0], q.get("y1", ["0"])[0], q.get("x2", ["0"])[0], q.get("y2", ["0"])[0]])
                       elif cmd == "scroll":
-                          x = qs.get("x", ["0"])[0]
-                          y = qs.get("y", ["0"])[0]
-                          dy = qs.get("dy", ["0"])[0]
-                          subprocess.Popen(["/tmp/mac_fast", "scroll", x, y, dy])
-                      elif cmd == "text":
-                          val = qs.get("val", [""])[0]
-                          subprocess.Popen(["/tmp/mac_fast", "text", val])
-                      elif cmd == "paste":
-                          val = qs.get("val", [""])[0]
-                          p = subprocess.Popen(["/usr/bin/pbcopy"], stdin=subprocess.PIPE)
-                          p.communicate(val.encode("utf-8"))
-                          subprocess.Popen(["/tmp/mac_fast", "cmdkey", "9"])
+                          subprocess.Popen(["/tmp/mac_fast", "scroll", q.get("x", ["0"])[0], q.get("y", ["0"])[0], q.get("dy", ["0"])[0]])
                       elif cmd == "key":
-                          kc = qs.get("kc", ["0"])[0]
-                          subprocess.Popen(["/tmp/mac_fast", "key", kc])
+                          subprocess.Popen(["/tmp/mac_fast", "key", q.get("kc", ["36"])[0]])
                       elif cmd == "cmdkey":
-                          kc = qs.get("kc", ["0"])[0]
-                          subprocess.Popen(["/tmp/mac_fast", "cmdkey", kc])
+                          subprocess.Popen(["/tmp/mac_fast", "cmdkey", q.get("kc", ["0"])[0]])
+                      elif cmd == "text":
+                          val = q.get("val", [""])[0]
+                          if val: subprocess.Popen(["/tmp/mac_fast", "text", val])
+                      elif cmd == "paste":
+                          val = q.get("val", [""])[0]
+                          if val:
+                              try:
+                                  p = subprocess.Popen(["/usr/bin/pbcopy"], stdin=subprocess.PIPE)
+                                  p.communicate(val.encode("utf-8"))
+                                  time.sleep(0.02)
+                                  subprocess.Popen(["/tmp/mac_fast", "cmdkey", "9"])
+                              except Exception:
+                                  pass
                       elif cmd == "app":
-                          name = qs.get("name", [""])[0]
+                          name = q.get("name", [""])[0]
                           if name == "launcher":
-                              subprocess.Popen(["/usr/bin/open", "/Applications/M&A Antidetect/M&A Launcher.app"])
+                              subprocess.Popen(["/bin/bash", "-c", """
+                              /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/M&A Launcher.app/Contents/MacOS/shardx-launcher-core" 2>/dev/null || true
+                              /usr/bin/codesign --force --sign - "/Applications/M&A Antidetect/M&A Launcher.app/Contents/MacOS/shardx-launcher" 2>/dev/null || true
+                              /usr/bin/codesign --force --deep --sign - "/Applications/M&A Antidetect/M&A Launcher.app" 2>/dev/null || true
+                              /usr/bin/open "/Applications/M&A Antidetect/M&A Launcher.app"
+                              """])
                           elif name == "safari":
                               subprocess.Popen(["/usr/bin/open", "-a", "Safari"])
                           elif name == "terminal":
                               subprocess.Popen(["/usr/bin/open", "-a", "Terminal"])
                           elif name == "finder":
                               subprocess.Popen(["/usr/bin/open", "/Applications/M&A Antidetect"])
+
                           elif name == "restart":
                               subprocess.Popen(["/bin/bash", "-c", """
                               /usr/bin/killall -9 "M&A Launcher" shardx-launcher shardx-launcher-core 2>/dev/null || true
@@ -533,6 +776,7 @@ jobs:
                               """])
                       self.send_response(200)
                       self.send_header("Content-Type", "application/json")
+                      self.send_header("Access-Control-Allow-Origin", "*")
                       self.end_headers()
                       self.wfile.write(b'{"ok":true}')
                   else:
@@ -567,36 +811,43 @@ jobs:
           if [ -n "$TUNNEL_URL" ]; then
             echo "Отправка ссылки в ntfy.sh..."
             curl -s \
-              -H "Title: Mac M1 Экран Готов!" \
+              -H "Title: Mac M1 готов к работе!" \
               -H "Priority: high" \
               -H "Tags: desktop_computer,apple" \
               -H "Click: $TUNNEL_URL" \
               -d "$TUNNEL_URL" \
               "https://ntfy.sh/ma_mac_live_screen_872c" || true
 
-            echo "  ✅ ГОТОВО! ОТКРОЙТЕ 30 FPS РАБОЧИЙ СТОЛ MAC M1 ПРЯМО В БРАУЗЕРЕ:"
+            echo "  🚀 ГОТОВО! Прямой 30 FPS доступ к MAC M1 запущен в браузере:"
             echo ""
-            echo "  👉  ${TUNNEL_URL}"
+            echo "  🌐  ${TUNNEL_URL}"
             echo ""
-            echo "  Пользователь Mac:  runner"
-            echo "  Пароль админа Mac: ma123456"
+            echo "  Пользователь Mac: runner"
+            echo "  Пароль от Mac: ma123456"
             echo ""
-            echo "  Плавная трансляция 30 кадров/сек без задержек и без установки программ!"
-            echo "  Поддерживаются: клики, двойной клик, правый клик, drag-перетаскивание,"
-            echo "  скролл колёсиком, прямой ввод с клавиатуры и быстрая вставка токена."
-            echo "  Сессия активна: ${KEEP_MINS} мин. (нажмите Cancel workflow, когда закончите)"
+            echo "  Плавный видеопоток 30 кадров/сек без задержек и подвисаний!"
+            echo "  Поддержка: клики, двойной клик, правый клик, drag-and-drop,"
+            echo "  скролл колёсиком, прямой ввод текста с клавиатуры и буфера обмена."
+            echo "  Время сессии: ${KEEP_MINS} мин. (нажмите Cancel workflow, чтобы остановить)"
 
             if [ -n "$GITHUB_STEP_SUMMARY" ]; then
-              echo "## 🚀 [КЛИКНИТЕ СЮДА: ОТКРЫТЬ ЭКРАН MAC M1 В БРАУЗЕРЕ](${TUNNEL_URL})" >> "$GITHUB_STEP_SUMMARY"
+              echo "## 🚀 [ОТКРЫТЬ ЭКРАН: Живой рабочий стол MAC M1 в браузере](${TUNNEL_URL})" >> "$GITHUB_STEP_SUMMARY"
               echo "" >> "$GITHUB_STEP_SUMMARY"
               echo "### 🌐 Прямая ссылка: **${TUNNEL_URL}**" >> "$GITHUB_STEP_SUMMARY"
-              echo "* **FPS трансляции:** 30 кадров/сек (работает прямо во вкладке браузера без программ)" >> "$GITHUB_STEP_SUMMARY"
-              echo "* **Логин пользователя Mac:** \`runner\`" >> "$GITHUB_STEP_SUMMARY"
-              echo "* **Пароль администратора Mac:** \`ma123456\`" >> "$GITHUB_STEP_SUMMARY"
+              echo "* **FPS видеопотока:** 30 кадров/сек (высокая плавность без лагов)" >> "$GITHUB_STEP_SUMMARY"
+              echo "* **Пользователь Mac:** \`runner\`" >> "$GITHUB_STEP_SUMMARY"
+              echo "* **Пароль от Mac:** \`ma123456\`" >> "$GITHUB_STEP_SUMMARY"
             fi
           else
-            echo "  ⚠️ Не удалось получить URL Cloudflare. Лог cloudflared:"
+            echo "  ⚠️ Не удалось получить URL Cloudflare. Проверьте cloudflared:"
             cat /tmp/cf.log
+            if [ -n "$GITHUB_STEP_SUMMARY" ]; then
+              echo "## ⚠️ Ошибка запуска туннеля Cloudflare" >> "$GITHUB_STEP_SUMMARY"
+              echo "Логи cloudflared:" >> "$GITHUB_STEP_SUMMARY"
+              echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+              cat /tmp/cf.log >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+              echo "\`\`\`" >> "$GITHUB_STEP_SUMMARY"
+            fi
           fi
           echo "================================================================================"
 
@@ -607,9 +858,9 @@ jobs:
             ELAPSED=$((ELAPSED + 15))
             REMAINING=$(( (TOTAL_SECS - ELAPSED) / 60 ))
             if [ -n "$TUNNEL_URL" ]; then
-              echo "🟢 [$(date +'%H:%M:%S')] Mac M1 активен (${REMAINING} мин осталось) 👉 ${TUNNEL_URL}"
+              echo "⏱ [$(date +'%H:%M:%S')] Mac M1 активен (${REMAINING} мин осталось) 🌐 ${TUNNEL_URL}"
             else
-              echo "⏳ [$(date +'%H:%M:%S')] Сессия активна (${REMAINING} мин осталось)"
+              echo "⏱ [$(date +'%H:%M:%S')] Сессия активна (${REMAINING} мин осталось)"
             fi
           done
           exit 0
