@@ -288,6 +288,84 @@ jobs:
           pkill -9 -x ShardX_core 2>/dev/null
           exit 0
 
+      - name: 2d. Гонка pristine CDN-движка против нашего payload (симлинки и сборка)
+        run: |
+          set +e
+          OUT=/tmp/ma_probe
+          mkdir -p $OUT
+          CDNDIR=/tmp/cdn_engine
+          rm -rf $CDNDIR; mkdir -p $CDNDIR
+          curl -sL --fail -o /tmp/cdn_mac.zip "https://pub-e57a7c60f6934eb09a6600bf2fc59cdc.r2.dev/ShardX-Mac-arm64.zip"
+          echo "cdn_zip_size=$(stat -f %z /tmp/cdn_mac.zip 2>/dev/null)" | tee $OUT/cdn_zip.txt
+          /usr/bin/ditto -x -k /tmp/cdn_mac.zip $CDNDIR
+          APP=$(find $CDNDIR -maxdepth 4 -name "ShardX.app" -type d | head -1)
+          echo "cdn_app=$APP" | tee $OUT/cdn_app.txt
+          FWR="$APP/Contents/Frameworks/ShardX Framework.framework"
+          ls -la "$FWR" | tee $OUT/cdn_fw_root.txt
+          md5 -q "$FWR/Versions/156.0.8078.48/ShardX Framework" | tee $OUT/cdn_fw_md5.txt
+          md5 -q "/Applications/M&A Antidetect/MA DATA/runtime/ShardX-Mac-arm64/ShardX.app/Contents/Frameworks/ShardX Framework.framework/Versions/156.0.8078.48/ShardX Framework" | tee $OUT/our_fw_md5.txt
+
+          [ -x /tmp/wl ] || echo "wl missing"
+          : > $OUT/race.tsv
+
+          race() {
+            local name=$1; local bin=$2; local port=$3
+            local ud=/tmp/race_$name
+            rm -rf $ud; mkdir -p $ud
+            "$bin" --user-data-dir=$ud --no-first-run --no-default-browser-check --window-size=534,969 --remote-debugging-port=$port about:blank >$OUT/race_$name.log 2>&1 &
+            local p=$!
+            sleep 11
+            local alive=no; kill -0 $p 2>/dev/null && alive=yes
+            local cpu=$(ps -p $p -o %cpu= 2>/dev/null | tr -d ' ')
+            local st=$(ps -p $p -o state= 2>/dev/null | tr -d ' ')
+            local win
+            if [ -x /tmp/wl ]; then win=$(/tmp/wl $p 2>/dev/null | tr '\n' ';'); else win="?"; fi
+            local cdp=$(curl -s -m 3 http://127.0.0.1:$port/json/version | head -c 60)
+            printf "%s\talive=%s\tstate=%s\tcpu=%s\twin=%s\tcdp=%s\n" "$name" "$alive" "${st:-?}" "${cpu:-?}" "${win:-none}" "${cdp:-none}" | tee -a $OUT/race.tsv
+            pkill -9 -f "user-data-dir=$ud" 2>/dev/null
+            sleep 2
+          }
+
+          if [ -n "$APP" ]; then
+            race cdn_pristine "$APP/Contents/MacOS/ShardX" 9951
+            # симплуляция нашей упаковки: 5 симлинков -> файлы с текстом пути
+            APP2=/tmp/cdn_flatten/ShardX-Mac-arm64
+            rm -rf /tmp/cdn_flatten; mkdir -p /tmp/cdn_flatten
+            /usr/bin/ditto -x -k /tmp/cdn_mac.zip /tmp/cdn_flatten
+            CDNAPP=$(find /tmp/cdn_flatten -maxdepth 4 -name "ShardX.app" -type d | head -1)
+            python3 - "$CDNAPP" <<'PY'
+          import os, sys
+          base = os.path.join(sys.argv[1], "Contents", "Frameworks", "ShardX Framework.framework")
+          links = {
+              "Helpers": "Versions/Current/Helpers",
+              "Libraries": "Versions/Current/Libraries",
+              "Resources": "Versions/Current/Resources",
+              "ShardX Framework": "Versions/Current/ShardX Framework",
+          }
+          for name, target in links.items():
+              p = os.path.join(base, name)
+              if os.path.islink(p) or os.path.isfile(p):
+                  os.remove(p)
+                  open(p, "w").write(target)
+                  print("flattened", name)
+          cur = os.path.join(base, "Versions", "Current")
+          if os.path.islink(cur) or os.path.isfile(cur):
+              os.remove(cur)
+              open(cur, "w").write("156.0.8078.48")
+              print("flattened Versions/Current")
+          PY
+            race cdn_flatten "$CDNAPP/Contents/MacOS/ShardX" 9952
+          else
+            echo "cdn app not found" | tee -a $OUT/race.tsv
+          fi
+
+          OURS="/Applications/M&A Antidetect/MA DATA/runtime/ShardX-Mac-arm64/ShardX.app/Contents/MacOS/ShardX_core"
+          race ours_engine "$OURS" 9953
+          echo "--- race done ---"
+          cat $OUT/race.tsv
+          pkill -9 -f ShardX 2>/dev/null
+          exit 0
+
       - name: 3. Скриншот рабочего стола после установки
         run: |
           set +e
