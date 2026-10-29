@@ -377,9 +377,9 @@ jobs:
           : > $OUT/accept.tsv
 
           ALLOW=""
-          if [ "$(sw_vers -productVersion | cut -d. -f1)" -lt 15 ]; then
+          if [ "$(sw_vers -productVersion | cut -d. -f1)" -lt 13 ]; then
             ALLOW=1
-            echo "pre-15 OS detected -> SHARDX_ALLOW_UNSUPPORTED_OS=1" | tee -a $OUT/accept_fw.txt
+            echo "pre-13 OS detected -> SHARDX_ALLOW_UNSUPPORTED_OS=1" | tee -a $OUT/accept_fw.txt
           fi
 
           acc() {
