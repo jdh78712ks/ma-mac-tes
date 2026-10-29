@@ -366,6 +366,60 @@ jobs:
           pkill -9 -f ShardX 2>/dev/null
           exit 0
 
+      - name: 2e. Приёмка — профиль через обёртку (с отпечатком и без)
+        run: |
+          set +e
+          OUT=/tmp/ma_probe
+          RT="/Applications/M&A Antidetect/MA DATA/runtime/ShardX-Mac-arm64"
+          FWR="$RT/ShardX.app/Contents/Frameworks/ShardX Framework.framework/Versions/156.0.8078.48/ShardX Framework"
+          echo "installed_fw_md5=$(md5 -q "$FWR")" | tee $OUT/accept_fw.txt
+          echo "os=$(sw_vers -productVersion) build=$(sw_vers -buildVersion)" | tee -a $OUT/accept_fw.txt
+          : > $OUT/accept.tsv
+
+          ALLOW=""
+          if [ "$(sw_vers -productVersion | cut -d. -f1)" -lt 15 ]; then
+            ALLOW=1
+            echo "pre-15 OS detected -> SHARDX_ALLOW_UNSUPPORTED_OS=1" | tee -a $OUT/accept_fw.txt
+          fi
+
+          acc() {
+            local name=$1; local port=$2; local withfp=$3
+            local ud=/tmp/acc_$name
+            rm -rf $ud; mkdir -p $ud
+            if [ "$withfp" = "yes" ]; then
+              local fp=$(ls "/Applications/M&A Antidetect/MA DATA/fingerprints"/*.json 2>/dev/null | head -1)
+              if [ -n "$fp" ]; then cp "$fp" $ud/fingerprint.json; echo "fp=$(basename "$fp")" >> $OUT/accept.tsv; fi
+            fi
+            if [ -n "$ALLOW" ]; then
+              SHARDX_ALLOW_UNSUPPORTED_OS=1 "$RT/ShardX" --user-data-dir=$ud --no-first-run --no-default-browser-check --window-size=534,969 --remote-debugging-port=$port about:blank >$OUT/acc_$name.log 2>&1 &
+            else
+              "$RT/ShardX" --user-data-dir=$ud --no-first-run --no-default-browser-check --window-size=534,969 --remote-debugging-port=$port about:blank >$OUT/acc_$name.log 2>&1 &
+            fi
+            local p=$!
+            sleep 14
+            local alive=no; kill -0 $p 2>/dev/null && alive=yes
+            local CP=$(pgrep -x ShardX_core | head -1)
+            local cpu=$(ps -p ${CP:-0} -o %cpu= 2>/dev/null | tr -d ' ')
+            local win
+            if [ -n "$CP" ] && [ -x /tmp/wl ]; then win=$(/tmp/wl $CP 2>/dev/null | tr '\n' ';'); else win="(no core)"; fi
+            local cdp=$(curl -s -m 3 http://127.0.0.1:$port/json/version | head -c 50)
+            local marker=$(cat $ud/window_ready 2>/dev/null | tr -d '\n')
+            local err=$(head -1 $ud/launch_error.txt 2>/dev/null | cut -c1-90)
+            printf "%s\twrapper=%s\tcpu=%s\twin=%s\tcdp=%s\tmarker=%s\terr=%s\n" \
+              "$name" "$alive" "${cpu:-?}" "${win:-none}" "${cdp:-none}" "${marker:-none}" "${err:-none}" | tee -a $OUT/accept.tsv
+            screencapture -x $OUT/acc_${name}.png 2>/dev/null
+            kill -9 $p 2>/dev/null
+            pkill -9 -f "user-data-dir=$ud" 2>/dev/null
+            sleep 3
+          }
+
+          acc plain 9971 no
+          acc fp    9972 yes
+          echo "--- accept done ---"
+          cat $OUT/accept.tsv
+          pkill -9 -x ShardX_core 2>/dev/null
+          exit 0
+
       - name: 3. Скриншот рабочего стола после установки
         run: |
           set +e
