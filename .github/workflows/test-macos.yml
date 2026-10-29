@@ -114,6 +114,57 @@ jobs:
           fi
           exit 0
 
+      - name: 2b. Проба движка ShardX на этой macOS (без лаунчера)
+        run: |
+          set +e
+          OUT=/tmp/ma_probe
+          mkdir -p $OUT
+          RT="/Applications/M&A Antidetect/MA DATA/runtime/ShardX-Mac-arm64"
+          echo "os=$(sw_vers -productVersion) build=$(sw_vers -buildVersion) arch=$(uname -m)" | tee $OUT/os.txt
+          ls "$RT" | tee $OUT/runtime_ls.txt
+          md5 -q "$RT/ShardX" | tee $OUT/wrapper_md5.txt
+          strings -a "$RT/ShardX" | grep -c "is not supported: the bundled Chromium" | tee $OUT/gate_literal.txt
+          cat > /tmp/wl.swift <<'SW'
+          import CoreGraphics
+          import Foundation
+          let pid = Int32(CommandLine.arguments[1])!
+          if let arr = CGWindowListCopyWindowInfo(CGWindowListOption(arrayLiteral: .excludeDesktopElements), kCGNullWindowID) as? [[String: Any]] {
+              var n = 0
+              for w in arr {
+                  if (w[kCGWindowOwnerPID as String] as? Int32) != pid { continue }
+                  n += 1
+                  let b = w[kCGWindowBounds as String] as? [String: Any] ?? [:]
+                  print("WIN \(n) \(b["Width"] ?? 0)x\(b["Height"] ?? 0) onscreen=\(w[kCGWindowIsOnscreen as String] ?? "nil")")
+              }
+              if n == 0 { print("WIN none") }
+          }
+          SW
+          swiftc -O /tmp/wl.swift -o /tmp/wl 2>$OUT/swiftc.log || echo "swiftc failed" | tee $OUT/swiftc_fail.txt
+          pkill -f ShardX_core 2>/dev/null
+          rm -rf /tmp/ma_probe_udd
+          "$RT/ShardX" --user-data-dir=/tmp/ma_probe_udd --no-first-run --no-default-browser-check --window-size=534,969 --remote-debugging-port=9920 about:blank >$OUT/wrapper.log 2>&1 &
+          WPID=$!
+          sleep 12
+          echo "wrapper_alive=$(kill -0 $WPID 2>/dev/null && echo yes || echo no)" | tee $OUT/alive.txt
+          CP=$(pgrep -x ShardX_core | head -1)
+          echo "core_pid=$CP" | tee $OUT/pid.txt
+          ps -p $CP -o pid,%cpu,rss,etime,comm 2>/dev/null | tee $OUT/ps.txt
+          if [ -n "$CP" ]; then /tmp/wl $CP | tee $OUT/windows.txt; else echo "WIN no-core" | tee $OUT/windows.txt; fi
+          curl -s -m 5 http://127.0.0.1:9920/json/version | tee $OUT/cdp.txt
+          echo | tee -a $OUT/cdp.txt
+          curl -s -m 5 http://127.0.0.1:9920/json/list | tail -c 1200 | tee $OUT/targets.txt
+          screencapture -x $OUT/after_launch.png 2>/dev/null
+          ls -la $OUT/after_launch.png | tee $OUT/shot.txt
+          echo "--- launch_error ---" | tee $OUT/launch_error.txt
+          cat /tmp/ma_probe_udd/launch_error.txt 2>/dev/null | tee -a $OUT/launch_error.txt
+          echo "--- summary ---"
+          for f in os.txt wrapper_md5.txt gate_literal.txt alive.txt pid.txt ps.txt windows.txt cdp.txt; do
+            echo "== $f =="; cat $OUT/$f; echo
+          done
+          pkill -f ShardX_core 2>/dev/null
+          exit 0
+
+
       - name: 3. Скриншот рабочего стола после установки
         run: |
           set +e
@@ -127,7 +178,9 @@ jobs:
         if: always()
         with:
           name: macos-m1-screenshots
-          path: /tmp/ma_screenshots/*.png
+          path: |
+            /tmp/ma_screenshots/*.png
+            /tmp/ma_probe/*
           if-no-files-found: ignore
 
       - name: 5. Запуск интерактивного экрана Mac M1 в браузере (30 FPS Web VPS)
@@ -159,7 +212,7 @@ jobs:
               snprintf(tmp_file, sizeof(tmp_file), "%s.tmp", target_file);
               CFURLRef url = CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8*)tmp_file, strlen(tmp_file), false);
               if (url) {
-                  CGImageDestinationRef dest = CGImageDestinationCreateWithURL(url, kUTTypeJPEG, 1, NULL);
+                  CGImageDestinationRef dest = CGImageDestinationCreateWithURL(url, CFSTR("public.jpeg"), 1, NULL);
                   if (dest) {
                       CFStringRef key = kCGImageDestinationLossyCompressionQuality;
                       CFNumberRef val = CFNumberCreate(NULL, kCFNumberFloatType, &g_quality);
