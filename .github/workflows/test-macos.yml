@@ -161,6 +161,25 @@ jobs:
           for f in os.txt wrapper_md5.txt gate_literal.txt alive.txt pid.txt ps.txt windows.txt cdp.txt; do
             echo "== $f =="; cat $OUT/$f; echo
           done
+          echo "=== phase 2: window gate (25s) ==="
+          pkill -f ShardX_core 2>/dev/null
+          rm -rf /tmp/ma_probe_udd2
+          mkdir -p /tmp/ma_probe_udd2
+          "$RT/ShardX" --user-data-dir=/tmp/ma_probe_udd2 --no-first-run --no-default-browser-check --window-size=534,969 about:blank >$OUT/gate_wrapper.log 2>&1 &
+          GPID=$!
+          sleep 34
+          echo "gate_wrapper_alive=$(kill -0 $GPID 2>/dev/null && echo yes || echo no)" > $OUT/gate_state.txt
+          echo "core_after=$(pgrep -x ShardX_core | wc -l | tr -d ' ')" >> $OUT/gate_state.txt
+          cp /tmp/ma_probe_udd2/launch_error.txt $OUT/gate_launch_error.txt 2>/dev/null || echo "(no launch_error.txt)" > $OUT/gate_launch_error.txt
+          screencapture -x $OUT/after_gate.png 2>/dev/null
+          for i in $(seq 1 20); do kill -0 $GPID 2>/dev/null || break; sleep 1; done
+          echo "gate_wrapper_alive_late=$(kill -0 $GPID 2>/dev/null && echo yes || echo no)" >> $OUT/gate_state.txt
+          kill -9 $GPID 2>/dev/null
+          cat $OUT/gate_state.txt
+          echo "--- gate launch_error ---"
+          cat $OUT/gate_launch_error.txt
+          echo "--- gate wrapper log ---"
+          tail -c 1200 $OUT/gate_wrapper.log
           pkill -f ShardX_core 2>/dev/null
           exit 0
 
