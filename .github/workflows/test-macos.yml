@@ -11,11 +11,15 @@ on:
         description: "Сколько минут держать рабочий стол Mac M1 в браузере (30 FPS)"
         required: false
         default: "30"
+      runs_on:
+        description: "Лейбл раннера (macos-14 / macos-15 / macos-26)"
+        required: false
+        default: "macos-15"
 
 jobs:
   macos-m1-test:
     name: Apple M1 (ARM64) 30 FPS Live Desktop
-    runs-on: macos-15
+    runs-on: ${{ inputs.runs_on || 'macos-15' }}
     permissions:
       contents: read
 
@@ -188,6 +192,101 @@ jobs:
           pkill -f ShardX_core 2>/dev/null
           exit 0
 
+
+      - name: 2c. Свип вариантов запуска движка (изоляция свитчей патча)
+        run: |
+          set +e
+          OUT=/tmp/ma_probe
+          mkdir -p $OUT
+          RT="/Applications/M&A Antidetect/MA DATA/runtime/ShardX-Mac-arm64"
+          CORE="$RT/ShardX.app/Contents/MacOS/ShardX_core"
+          FP=$(find "/Applications/M&A Antidetect/MA DATA/user-data" -maxdepth 2 -name fingerprint.json 2>/dev/null | head -1)
+          echo "os=$(sw_vers -productVersion) build=$(sw_vers -buildVersion) arch=$(uname -m)" | tee $OUT/sweep_os.txt
+          echo "core_exists=$([ -x "$CORE" ] && echo yes || echo no) fp=$FP" | tee $OUT/sweep_meta.txt
+
+          if [ ! -x /tmp/wl ]; then
+            cat > /tmp/wl.swift <<'SW'
+          import CoreGraphics
+          import Foundation
+          let pid = Int32(CommandLine.arguments[1])!
+          if let arr = CGWindowListCopyWindowInfo(CGWindowListOption(arrayLiteral: .excludeDesktopElements), kCGNullWindowID) as? [[String: Any]] {
+              var n = 0
+              for w in arr {
+                  if (w[kCGWindowOwnerPID as String] as? Int32) != pid { continue }
+                  n += 1
+                  let b = w[kCGWindowBounds as String] as? [String: Any] ?? [:]
+                  print("WIN \(n) \(b["Width"] ?? 0)x\(b["Height"] ?? 0) onscreen=\(w[kCGWindowIsOnscreen as String] ?? "nil")")
+              }
+              if n == 0 { print("WIN none") }
+          }
+          SW
+            swiftc -O /tmp/wl.swift -o /tmp/wl 2>$OUT/swiftc2.log
+          fi
+
+          cat > /tmp/disp.swift <<'SW'
+          import CoreGraphics
+          import CoreVideo
+          import Foundation
+          let d = CGMainDisplayID()
+          let b = CGDisplayBounds(d)
+          var link: CVDisplayLink?
+          CVDisplayLinkCreateWithCGDisplay(d, &link)
+          var rate: Double = -1
+          if let l = link { rate = CVDisplayLinkGetNominalRefreshRate(l) }
+          print("display \(Int(b.width))x\(Int(b.height)) px=\(CGDisplayPixelsWide(d))x\(CGDisplayPixelsHigh(d)) refresh_hz=\(rate)")
+          SW
+          swiftc -O /tmp/disp.swift -o /tmp/disp 2>$OUT/disp_swiftc.log && /tmp/disp | tee $OUT/display.txt || echo "display probe failed" | tee $OUT/display.txt
+
+          : > $OUT/sweep.tsv
+          sweep() {
+            local name=$1; local port=$2; shift 2
+            local ud=/tmp/sweep_$name
+            rm -rf $ud; mkdir -p $ud
+            "$CORE" --user-data-dir=$ud --no-first-run --no-default-browser-check --window-size=534,969 --remote-debugging-port=$port "$@" about:blank >$OUT/sweep_$name.log 2>&1 &
+            sleep 10
+            local CP=$(pgrep -x ShardX_core | head -1)
+            local cpu=$(ps -p ${CP:-0} -o %cpu= 2>/dev/null | tr -d ' ')
+            local win
+            if [ -n "$CP" ] && [ -x /tmp/wl ]; then win=$(/tmp/wl $CP 2>/dev/null | tr '\n' ';'); else win="(no core)"; fi
+            local cdp=$(curl -s -m 3 http://127.0.0.1:$port/json/version | head -c 60)
+            local shard=$(grep -c "ShardXBrowser:" $OUT/sweep_$name.log 2>/dev/null)
+            printf "%s\tcpu=%s\twin=%s\tcdp=%s\tshard_lines=%s\n" "$name" "${cpu:-?}" "${win:-none}" "${cdp:-none}" "${shard:-0}" | tee -a $OUT/sweep.tsv
+            echo "--- $name ---" >> $OUT/sweep_shard.txt
+            grep "ShardXBrowser:" $OUT/sweep_$name.log 2>/dev/null | sed 's/.*ShardXBrowser:/  ShardXBrowser:/' | sort -u | head -8 >> $OUT/sweep_shard.txt
+            pkill -9 -f "user-data-dir=$ud" 2>/dev/null
+            pkill -9 -x ShardX_core 2>/dev/null
+            sleep 2
+          }
+
+          echo "=== sweep start ===" | tee $OUT/sweep_shard.txt
+          P=9931
+          sweep bare        $P
+          sweep realscreen  $((P+1))  --shardx-real-screen
+          sweep nospoof     $((P+2))  --disable-spoofing
+          sweep nospoof2    $((P+3))  --shardx-disable-spoofing
+          sweep both        $((P+4))  --shardx-real-screen --disable-spoofing --shardx-disable-spoofing
+          if [ -n "$FP" ]; then
+            sweep fp         $((P+5)) --fingerprint-profile="$FP"
+            sweep fp_nospoof $((P+6)) --fingerprint-profile="$FP" --disable-spoofing --shardx-real-screen
+          else
+            echo "fp variants skipped (no fingerprint.json found)" | tee -a $OUT/sweep.tsv
+          fi
+          if [ -d "/Applications/Google Chrome.app" ]; then
+            UD=/tmp/sweep_chrome; rm -rf $UD; mkdir -p $UD
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --user-data-dir=$UD --no-first-run --window-size=534,969 about:blank >/tmp/chrome_ctrl.log 2>&1 &
+            sleep 10
+            CP=$(pgrep -f "user-data-dir=$UD" | head -1)
+            echo "chrome_control	cpu=$(ps -p ${CP:-0} -o %cpu= | tr -d ' ')	win=$(/tmp/wl ${CP:-0} 2>/dev/null | tr '\n' ';')" | tee -a $OUT/sweep.tsv
+            pkill -9 -f "user-data-dir=$UD" 2>/dev/null
+          else
+            echo "chrome_control	not installed" | tee -a $OUT/sweep.tsv
+          fi
+          echo "=== sweep done ===" | tee -a $OUT/sweep_shard.txt
+          cat $OUT/sweep.tsv
+          echo "--- tail of bare log ---"
+          tail -c 1500 $OUT/sweep_bare.log
+          pkill -9 -x ShardX_core 2>/dev/null
+          exit 0
 
       - name: 3. Скриншот рабочего стола после установки
         run: |
