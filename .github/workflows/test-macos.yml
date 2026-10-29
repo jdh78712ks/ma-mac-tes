@@ -123,6 +123,8 @@ jobs:
           echo "os=$(sw_vers -productVersion) build=$(sw_vers -buildVersion) arch=$(uname -m)" | tee $OUT/os.txt
           ls "$RT" | tee $OUT/runtime_ls.txt
           md5 -q "$RT/ShardX" | tee $OUT/wrapper_md5.txt
+          md5 -q "$RT/libshardx_hook.dylib" | tee $OUT/hook_loose_md5.txt
+          md5 -q "$RT/ShardX.app/Contents/MacOS/libshardx_hook.dylib" | tee $OUT/hook_app_md5.txt
           strings -a "$RT/ShardX" | grep -c "is not supported: the bundled Chromium" | tee $OUT/gate_literal.txt
           cat > /tmp/wl.swift <<'SW'
           import CoreGraphics
@@ -158,7 +160,7 @@ jobs:
           echo "--- launch_error ---" | tee $OUT/launch_error.txt
           cat /tmp/ma_probe_udd/launch_error.txt 2>/dev/null | tee -a $OUT/launch_error.txt
           echo "--- summary ---"
-          for f in os.txt wrapper_md5.txt gate_literal.txt alive.txt pid.txt ps.txt windows.txt cdp.txt; do
+          for f in os.txt wrapper_md5.txt hook_loose_md5.txt hook_app_md5.txt gate_literal.txt alive.txt pid.txt ps.txt windows.txt cdp.txt; do
             echo "== $f =="; cat $OUT/$f; echo
           done
           echo "=== phase 2: window gate (25s) ==="
