@@ -15,7 +15,7 @@ on:
 jobs:
   macos-m1-test:
     name: Apple M1 (ARM64) 30 FPS Live Desktop
-    runs-on: macos-14
+    runs-on: macos-15
     permissions:
       contents: read
 
