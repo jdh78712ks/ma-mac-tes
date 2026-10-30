@@ -377,14 +377,19 @@ hud_lifetime_test() {
   sleep 16
   local cp wp
   cp=$(pgrep -x ShardX_core | head -1)
-  wp=$(ps -Ao pid,command | grep "[S]hardx-Mac-arm64/ShardX" | grep -v "ShardX_core" | awk '{print $1}' | head -1)
+  # The wrapper is the process carrying this --user-data-dir that is not the core.
+  wp=$(ps -Ao pid,command | grep -- "--user-data-dir=$ud" | grep -v "ShardX_core" | awk '{print $1}' | head -1)
   echo "--- HUD lifetime: core=${cp:-none} wrapper=${wp:-none} ---" | tee -a "$OUT/parity.txt"
   if [ -z "$cp" ]; then
     echo "VERDICT D6 HUD lifetime: INCONCLUSIVE (profile did not start)" | tee -a "$OUT/parity.txt"
     return
   fi
-  kill -9 "$cp" 2>/dev/null
+  # Kill the parent FIRST: then nothing can send the HUD a SIGTERM and only its
+  # own "browser window is gone" watchdog can close the panel (the orphan case
+  # seen in the acceptance screenshot).
   [ -n "$wp" ] && kill -9 "$wp" 2>/dev/null
+  sleep 1
+  kill -9 "$cp" 2>/dev/null
   local i gone=no
   for i in $(seq 1 16); do
     sleep 1
