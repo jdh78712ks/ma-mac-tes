@@ -80,7 +80,30 @@ if let g = frame(wid) {
     print("AFTER x=\(Int(g.origin.x)) y=\(Int(g.origin.y)) w=\(Int(g.size.width)) h=\(Int(g.size.height))")
 } else { print("NOFRAME_AFTER") }
 SW
-swiftc -O "$OUT/dragwin.swift" -o "$OUT/dragwin" 2>>"$OUT/swiftc.log"
+# --- synthetic click inside the toolbar chip zones -------------------------
+cat > "$OUT/clickwin.swift" <<'SW'
+import Cocoa
+let a = CommandLine.arguments
+if a.count < 4 { print("USAGE wid dx dy"); exit(2) }
+let wid = CGWindowID(UInt32(a[1] ?? "0") ?? 0)
+let dx = Double(a[2] ?? "0") ?? 0
+let dy = Double(a[3] ?? "0") ?? 0
+let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], wid) as? [[String: Any]] ?? []
+guard let w = info.first, let b = w[kCGWindowBounds as String] as? [String: CGFloat] else {
+    print("NOFRAME"); exit(3)
+}
+let p = CGPoint(x: (b["X"] ?? 0) + dx, y: (b["Y"] ?? 0) + dy)
+print("CLICK x=\(Int(p.x)) y=\(Int(p.y))")
+let src = CGEventSource(stateID: .hidSystemState)
+func post(_ t: CGEventType, _ p: CGPoint) {
+    CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+}
+post(.leftMouseDown, p)
+usleep(90000)
+post(.leftMouseUp, p)
+usleep(250000)
+SW
+swiftc -O "$OUT/clickwin.swift" -o "$OUT/clickwin" 2>>"$OUT/swiftc.log"
 
 # --- deterministic page (served locally, set as the profile start_url) -----
 mkdir -p /tmp/parityweb
@@ -299,6 +322,28 @@ PYEOF
       echo "VERDICT D1 window drag: PASS (hook took the drag, window moved off-capture)" | tee -a "$OUT/parity.txt"
     else
       echo "VERDICT D1 window drag: INCONCLUSIVE (synthetic CGEvents may need Accessibility; hook markers above)" | tee -a "$OUT/parity.txt"
+    fi
+
+    # Chip clicks: window was just dragged +60 px, so offsets are taken from the
+    # live frame. 65 px from the right edge = LINK, 106 px = bookmarks chevron.
+    if [ -x "$OUT/clickwin" ]; then
+      echo "--- chip click probe ---" | tee -a "$OUT/parity.txt"
+      "$OUT/clickwin" "$wid" -65 60 2>&1 | tee -a "$OUT/parity.txt"
+      "$OUT/clickwin" "$wid" -106 60 2>&1 | tee -a "$OUT/parity.txt"
+      sleep 1
+      local CHIP_LOG
+      CHIP_LOG=$(grep -aE "chip click" "$ud/shardx_overlay.log" 2>/dev/null | tail -4)
+      printf '%s\n' "$CHIP_LOG" | tee -a "$OUT/parity.txt"
+      if printf '%s\n' "$CHIP_LOG" | grep -q "chip click link"; then
+        echo "VERDICT D5a link chip click: PASS (hook consumed the click inside 46..84 px)" | tee -a "$OUT/parity.txt"
+      else
+        echo "VERDICT D5a link chip click: FAIL (hook saw no click in the link zone)" | tee -a "$OUT/parity.txt"
+      fi
+      if printf '%s\n' "$CHIP_LOG" | grep -q "chip click menu"; then
+        echo "VERDICT D5b menu chip click: PASS (hook consumed the click inside 85..128 px)" | tee -a "$OUT/parity.txt"
+      else
+        echo "VERDICT D5b menu chip click: FAIL (hook saw no click in the menu zone)" | tee -a "$OUT/parity.txt"
+      fi
     fi
   fi
   kill_profile
