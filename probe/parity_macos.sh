@@ -147,7 +147,7 @@ PY
   fi
 
   echo "--- overlay debug ---" | tee -a "$OUT/parity.txt"
-  cat "$ud/shardx_overlay.log" 2>/dev/null | tail -80 | tee -a "$OUT/parity.txt"
+  cat "$ud/shardx_overlay.log" 2>/dev/null | tail -400 | tee -a "$OUT/parity.txt"
   list_windows "$case_name (all)" 0 >/dev/null
   echo "$case_name|$cp|$wid|$wx|$wy|$ww|$wh" >> "$OUT/windows.tsv"
   kill_profile
