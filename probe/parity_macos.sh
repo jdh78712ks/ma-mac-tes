@@ -85,7 +85,7 @@ kill_profile() {
 
 # --- one scenario: launch + measure ---------------------------------------
 run_case() {
-  local case_name=$1 with_fp=$2
+  local case_name=$1 with_fp=$2 extra=${3:-}
   local ud="/tmp/par_${case_name}"
   rm -rf "$ud"; mkdir -p "$ud"
   kill_profile
@@ -103,7 +103,7 @@ PY
     echo "fingerprint: $(basename "$FP_FILE")" | tee -a "$OUT/parity.txt"
   fi
 
-  ( SHARDX_OVERLAY_DEBUG=1 "$RT/ShardX" --user-data-dir="$ud" --no-first-run --no-default-browser-check \
+  ( env SHARDX_OVERLAY_DEBUG=1 $extra "$RT/ShardX" --user-data-dir="$ud" --no-first-run --no-default-browser-check \
       --window-size=534,969 --remote-debugging-port="$PORT" --remote-allow-origins='*' about:blank \
       >"$OUT/${case_name}.log" 2>&1 & )
 
@@ -185,8 +185,10 @@ sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
   "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.apple.Terminal',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,1677721600);" 2>/dev/null || true
 
 : > "$OUT/windows.tsv"
-run_case mob yes
-run_case desk no
+run_case mob yes ""
+run_case mobnoov yes "SHARDX_NO_OVERLAYS=1"
+run_case mobnodark yes "SHARDX_NO_DARKBG=1"
+run_case desk no ""
 
 # --- pixel analysis -------------------------------------------------------
 python3 -m pip install --quiet --user pillow 2>/dev/null || python3 -m pip install --quiet --break-system-packages pillow 2>/dev/null || true
@@ -255,7 +257,7 @@ def analyse(path, mobile):
     print("  VERDICT D5 toolbar chips painted: %s" % ("PASS" if hits >= 80 else "FAIL"))
     return hits
 
-for case, mobile in (("mob", True), ("desk", False)):
+for case, mobile in (("mob", True), ("mobnoov", True), ("mobnodark", True), ("desk", False)):
     for name in ("%s_win.png" % case, "%s_desktop.png" % case):
         p = os.path.join(out, name)
         if os.path.exists(p) and os.path.getsize(p):
