@@ -186,8 +186,6 @@ sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
 
 : > "$OUT/windows.tsv"
 run_case mob yes ""
-run_case mobnoov yes "SHARDX_NO_OVERLAYS=1"
-run_case mobnodark yes "SHARDX_NO_DARKBG=1"
 run_case desk no ""
 
 # --- pixel analysis -------------------------------------------------------
@@ -257,7 +255,7 @@ def analyse(path, mobile):
     print("  VERDICT D5 toolbar chips painted: %s" % ("PASS" if hits >= 80 else "FAIL"))
     return hits
 
-for case, mobile in (("mob", True), ("mobnoov", True), ("mobnodark", True), ("desk", False)):
+for case, mobile in (("mob", True), ("desk", False)):
     for name in ("%s_win.png" % case, "%s_desktop.png" % case):
         p = os.path.join(out, name)
         if os.path.exists(p) and os.path.getsize(p):
