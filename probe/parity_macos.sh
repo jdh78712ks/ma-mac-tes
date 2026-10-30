@@ -303,7 +303,10 @@ PYEOF
     # The rail must sit just right of the profile window, not on top of the page.
     local hud_right_of_win=0
     if [ -n "$ww" ]; then
-      hud_right_of_win=$(printf '%s\n' "$HUD_WL" | awk -F'\t' -v wr=$((wx + ww)) '$4==3 && $6 >= wr - 2 {c++} END{print c+0}')
+      # Fields: WIN,pid,num,layer,x,y,w,h,owner,name — the rail's LEFT edge is $5.
+      # ($6 is y and made this counter read 0 even when the panel sat exactly to
+      # the right of the profile window.)
+      hud_right_of_win=$(printf '%s\n' "$HUD_WL" | awk -F'\t' -v wr=$((wx + ww)) '$4==3 && $5 >= wr - 2 {c++} END{print c+0}')
     fi
     echo "VERDICT D2 HUD panel: PASS (process alive, panel window on screen, right_of_window=$hud_right_of_win)" | tee -a "$OUT/parity.txt"
     # --- D7: the rail must be a frameless panel, not a titled window ---------
