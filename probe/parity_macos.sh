@@ -94,7 +94,11 @@ let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], wid) as? [[Strin
 guard let w = info.first, let b = w[kCGWindowBounds as String] as? [String: CGFloat] else {
     print("NOFRAME"); exit(3)
 }
-let p = CGPoint(x: (b["X"] ?? 0) + dx, y: (b["Y"] ?? 0) + dy)
+// A negative dx counts from the RIGHT edge of the window (chip zones are
+// defined as 46..128 px from the right), anything else from the left edge.
+let baseX = (b["X"] ?? 0)
+let baseW = (b["Width"] ?? 0)
+let p = CGPoint(x: baseX + (dx < 0 ? baseW : 0) + dx, y: (b["Y"] ?? 0) + dy)
 print("CLICK x=\(Int(p.x)) y=\(Int(p.y))")
 let src = CGEventSource(stateID: .hidSystemState)
 func post(_ t: CGEventType, _ p: CGPoint) {
