@@ -357,6 +357,49 @@ PYEOF
   kill_profile
 }
 
+# --- HUD must not outlive the browser when its parent is killed -----------
+# Real launcher flow: stopping a profile can SIGKILL the wrapper, so the HUD is
+# orphaned without a SIGTERM. It has to notice the missing window itself.
+hud_lifetime_test() {
+  local data="/tmp/ma_parity_data"
+  local src_prof prof_id ud
+  src_prof=$(ls "/Applications/M&A Antidetect/MA DATA/profiles"/*.json 2>/dev/null | head -1)
+  prof_id=$(basename "$src_prof" .json)
+  mkdir -p "$data/profiles"
+  cp "$src_prof" "$data/profiles/$prof_id.json"
+  ud="$data/user-data/$prof_id"
+  rm -rf "$ud"; mkdir -p "$ud"
+  cp "$FP_FILE" "$ud/fingerprint.json" 2>/dev/null
+  kill_profile
+  ( env SHARDX_OVERLAY_DEBUG=1 "$RT/ShardX" --user-data-dir="$ud" --no-first-run \
+      --no-default-browser-check --remote-debugging-port="$PORT" --remote-allow-origins='*' about:blank \
+      >"$OUT/hudlife.log" 2>&1 & )
+  sleep 16
+  local cp wp
+  cp=$(pgrep -x ShardX_core | head -1)
+  wp=$(ps -Ao pid,command | grep "[S]hardx-Mac-arm64/ShardX" | grep -v "ShardX_core" | awk '{print $1}' | head -1)
+  echo "--- HUD lifetime: core=${cp:-none} wrapper=${wp:-none} ---" | tee -a "$OUT/parity.txt"
+  if [ -z "$cp" ]; then
+    echo "VERDICT D6 HUD lifetime: INCONCLUSIVE (profile did not start)" | tee -a "$OUT/parity.txt"
+    return
+  fi
+  kill -9 "$cp" 2>/dev/null
+  [ -n "$wp" ] && kill -9 "$wp" 2>/dev/null
+  local i gone=no
+  for i in $(seq 1 16); do
+    sleep 1
+    if ! ps -Ao command | grep -q "[b]ookmark_hud.py"; then gone=yes; break; fi
+  done
+  if [ "$gone" = yes ]; then
+    echo "VERDICT D6 HUD lifetime: PASS (exited ${i}s after the browser window died, no parent)" | tee -a "$OUT/parity.txt"
+  else
+    echo "VERDICT D6 HUD lifetime: FAIL (still alive 16 s after browser+wrapper were killed)" | tee -a "$OUT/parity.txt"
+  fi
+  grep -a "closing HUD\|Browser window\|gone" "$data/runtime/hud_state/bookmark_hud.log" 2>/dev/null | tail -3 | tee -a "$OUT/parity.txt"
+  pkill -9 -f "bookmark_hud.py" 2>/dev/null
+  pkill -9 -f "camera_link_bridge.py" 2>/dev/null
+}
+
 # --- pick a mobile (iPhone) fingerprint ------------------------------------
 FP_FILE=$(python3 - <<'PY'
 import glob, json
@@ -393,6 +436,7 @@ run_case mob yes ""
 run_case mobmask yes "SHARDX_NO_CHIPS=1"
 run_case mobchips yes "SHARDX_NO_MASK=1"
 run_case desk no ""
+hud_lifetime_test
 
 # --- pixel analysis -------------------------------------------------------
 python3 -m pip install --quiet --user pillow 2>/dev/null || python3 -m pip install --quiet --break-system-packages pillow 2>/dev/null || true
