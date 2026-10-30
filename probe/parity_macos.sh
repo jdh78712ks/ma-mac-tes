@@ -162,6 +162,20 @@ PY
   PY="/Applications/M&A Antidetect/MA DATA/runtime/python/bin/python3"
   ls -l "$PY" 2>&1 | tee -a "$OUT/parity.txt"
   "$PY" -c "import sys; print('python', sys.version.split()[0]); import tkinter; print('tk', tkinter.TkVersion)" 2>&1 | head -4 | tee -a "$OUT/parity.txt"
+  cat > /tmp/tk_test.py <<'PYEOF'
+import sys, tkinter
+print("tk version", tkinter.TkVersion, "python", sys.version.split()[0], flush=True)
+r = tkinter.Tk()
+r.withdraw()
+r.update()
+print("tk create OK", r.winfo_screenwidth(), r.winfo_screenheight(), flush=True)
+r.destroy()
+PYEOF
+  echo "--- tk smoke ---" | tee -a "$OUT/parity.txt"
+  file "$PY" | tee -a "$OUT/parity.txt"
+  "$PY" /tmp/tk_test.py 2>&1 | head -12 | tee -a "$OUT/parity.txt"
+  echo "tk rc=${PIPESTATUS[0]}" | tee -a "$OUT/parity.txt"
+  osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>&1 | head -2 | tee -a "$OUT/parity.txt"
   if [ "$case_name" = "mob" ]; then
     echo "--- manual hud run ---" | tee -a "$OUT/parity.txt"
     ( "$PY" "$data/runtime/bookmark_hud.py" "$case_name" "$data" alex "$cp" >/tmp/hud_manual.log 2>&1 & )
