@@ -206,8 +206,11 @@ PYEOF
     mkdir -p /tmp/hudcopy
     cp "$data/runtime"/*.py /tmp/hudcopy/ 2>/dev/null
     rm -f /tmp/hudcopy/bookmark_hud.log
-    timeout 8 "$PY" /tmp/hudcopy/bookmark_hud.py "$prof_id" "$data" alex "$cp" >/tmp/hud_manual.log 2>&1
-    echo "hud rc=$?" | tee -a "$OUT/parity.txt"
+    "$PY" /tmp/hudcopy/bookmark_hud.py "$prof_id" "$data" alex "$cp" >/tmp/hud_manual.log 2>&1 &
+    local hud_pid=$!
+    sleep 8
+    if ps -p "$hud_pid" >/dev/null 2>&1; then echo "hud alive after 8s (pid $hud_pid)" | tee -a "$OUT/parity.txt"; else wait "$hud_pid"; echo "hud exited rc=$?" | tee -a "$OUT/parity.txt"; fi
+    kill -9 "$hud_pid" 2>/dev/null || true
     head -20 /tmp/hud_manual.log | tee -a "$OUT/parity.txt"
     echo "--- hud log ---" | tee -a "$OUT/parity.txt"
     head -25 /tmp/hudcopy/bookmark_hud.log 2>&1 | tee -a "$OUT/parity.txt"
