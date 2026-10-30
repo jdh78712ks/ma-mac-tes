@@ -77,7 +77,7 @@ run_case() {
     echo "fingerprint: $(basename "$FP_FILE")" | tee -a "$OUT/parity.txt"
   fi
 
-  ( "$RT/ShardX" --user-data-dir="$ud" --no-first-run --no-default-browser-check \
+  ( SHARDX_OVERLAY_DEBUG=1 "$RT/ShardX" --user-data-dir="$ud" --no-first-run --no-default-browser-check \
       --window-size=534,969 --remote-debugging-port="$PORT" about:blank \
       >"$OUT/${case_name}.log" 2>&1 & )
 
@@ -120,6 +120,8 @@ run_case() {
     screencapture -x "$OUT/${case_name}_desktop.png" 2>/dev/null
   fi
 
+  echo "--- overlay debug ---" | tee -a "$OUT/parity.txt"
+  cat "$ud/shardx_overlay.log" 2>/dev/null | tail -6 | tee -a "$OUT/parity.txt"
   list_windows "$case_name (all)" 0 >/dev/null
   echo "$case_name|$cp|$wid|$wx|$wy|$ww|$wh" >> "$OUT/windows.tsv"
   kill_profile
