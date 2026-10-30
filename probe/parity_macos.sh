@@ -306,6 +306,29 @@ PYEOF
       hud_right_of_win=$(printf '%s\n' "$HUD_WL" | awk -F'\t' -v wr=$((wx + ww)) '$4==3 && $6 >= wr - 2 {c++} END{print c+0}')
     fi
     echo "VERDICT D2 HUD panel: PASS (process alive, panel window on screen, right_of_window=$hud_right_of_win)" | tee -a "$OUT/parity.txt"
+    # --- D7: the rail must be a frameless panel, not a titled window ---------
+    local hud_line hud_h hud_note hud_fail
+    hud_line=""; hud_fail=""
+    for f in "$data/runtime/hud_state/bookmark_hud.log" "$HOME/Library/Caches/M&A/hud_state/bookmark_hud.log" \
+             "$HOME/Library/Application Support/shardx-launcher/cache/hud_state/bookmark_hud.log" \
+             "$data/runtime/bookmark_hud.log"; do
+      [ -f "$f" ] || continue
+      [ -n "$hud_fail" ] || hud_fail=$(grep -a "chrome strip failed\|chrome strip raised" "$f" 2>/dev/null | tail -1)
+      [ -n "$hud_line" ] || hud_line=$(grep -a "HUD panel chrome stripped" "$f" 2>/dev/null | tail -1)
+    done
+    hud_h=$(printf '%s\n' "$HUD_WL" | awk -F'\t' '$4==3 {print $8}' | sort -nr | head -1)
+    if [ -n "$hud_fail" ]; then
+      echo "VERDICT D7 HUD frameless: FAIL (chrome strip reported: $hud_fail)" | tee -a "$OUT/parity.txt"
+    elif [ -n "$hud_line" ]; then
+      if printf '%s' "$hud_line" | grep -q "stripped=0"; then
+        hud_note="Tk mapped it frameless already; pass ran"
+      else
+        hud_note="titled window cleared at runtime"
+      fi
+      echo "VERDICT D7 HUD frameless: PASS ($hud_note; rail h=${hud_h:-?} page h=${wh:-?}; $hud_line)" | tee -a "$OUT/parity.txt"
+    else
+      echo "VERDICT D7 HUD frameless: FAIL (no 'HUD panel chrome stripped' line in the HUD log; rail h=${hud_h:-?})" | tee -a "$OUT/parity.txt"
+    fi
   elif ps -Ao command | grep -q "[b]ookmark_hud.py"; then
     echo "VERDICT D2 HUD panel: PARTIAL (process alive, no window listed)" | tee -a "$OUT/parity.txt"
   else
