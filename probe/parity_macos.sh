@@ -47,6 +47,39 @@ for w in all {
 SW
 swiftc -O "$OUT/wl.swift" -o "$OUT/wl" 2>"$OUT/swiftc.log"
 
+# --- synthetic drag: posts real CGEvents on the window's top strip ----------
+cat > "$OUT/dragwin.swift" <<'SW'
+import Cocoa
+let a = CommandLine.arguments
+if a.count < 2 { print("USAGE wid"); exit(2) }
+let wid = CGWindowID(UInt32(a[1] ?? "0") ?? 0)
+func frame(_ id: CGWindowID) -> CGRect? {
+    let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]] ?? []
+    guard let w = info.first, let b = w[kCGWindowBounds as String] as? [String: CGFloat] else { return nil }
+    return CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0)
+}
+guard let f = frame(wid) else { print("NOFRAME"); exit(3) }
+print("BEFORE x=\(Int(f.origin.x)) y=\(Int(f.origin.y)) w=\(Int(f.size.width)) h=\(Int(f.size.height))")
+let sx = f.origin.x + f.size.width * 0.6
+let sy = f.origin.y + 18
+let src = CGEventSource(stateID: .hidSystemState)
+func post(_ t: CGEventType, _ p: CGPoint) {
+    CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+}
+post(.leftMouseDown, CGPoint(x: sx, y: sy))
+usleep(150000)
+for i in 1...10 {
+    post(.leftMouseDragged, CGPoint(x: sx, y: sy + CGFloat(i) * 8))
+    usleep(35000)
+}
+post(.leftMouseUp, CGPoint(x: sx, y: sy + 80))
+usleep(250000)
+if let g = frame(wid) {
+    print("AFTER x=\(Int(g.origin.x)) y=\(Int(g.origin.y)) w=\(Int(g.size.width)) h=\(Int(g.size.height))")
+} else { print("NOFRAME_AFTER") }
+SW
+swiftc -O "$OUT/dragwin.swift" -o "$OUT/dragwin" 2>>"$OUT/swiftc.log"
+
 # --- deterministic page (served locally, set as the profile start_url) -----
 mkdir -p /tmp/parityweb
 cat > /tmp/parityweb/parity.html <<'HTML'
@@ -65,6 +98,10 @@ HTML
 sleep 1
 curl -fsS http://127.0.0.1:8799/parity.html -o /dev/null && echo "local page server: ok" | tee -a "$OUT/parity.txt"
 mkdir -p /tmp/ma_parity_data
+# The HUD reads the launcher settings first on macOS; without this file it falls
+# back to the app's shipped settings.json, which lives in a root-owned directory.
+mkdir -p "$HOME/Library/Application Support/shardx-launcher"
+echo '{"helper_enabled": true}' > "$HOME/Library/Application Support/shardx-launcher/settings.json"
 echo '{"helper_enabled": true}' > /tmp/ma_parity_data/settings.json
 echo "--- launcher settings ---" | tee -a "$OUT/parity.txt"
 cat "$HOME/Library/Application Support/shardx-launcher/settings.json" 2>&1 | head -5 | tee -a "$OUT/parity.txt"
@@ -96,8 +133,12 @@ run_case() {
   # <data root>/runtime, so the probe has to mirror the real layout
   # (MA DATA/user-data/<uuid>) instead of a bare /tmp dir.
   local data="/tmp/ma_parity_data"
-  mkdir -p "$data/user-data"
-  [ -e "$data/runtime" ] || ln -s "/Applications/M&A Antidetect/MA DATA/runtime" "$data/runtime"
+  mkdir -p "$data/user-data" "$data/runtime"
+  # Copy the scripts instead of symlinking the app runtime: the real runtime
+  # directory is root-owned, so the HUD could not create favicon_cache/ there and
+  # died at import time, while its own bookmark_hud.log stayed unwritable.
+  cp -f "/Applications/M&A Antidetect/MA DATA/runtime"/*.py \
+        "/Applications/M&A Antidetect/MA DATA/runtime"/*.dylib "$data/runtime/" 2>/dev/null || true
   # A real profile id is required: bookmark_hud.py looks up
   # profiles/<id>.json and the browser window by that id, and exits when the
   # id is a probe label like "mob".
@@ -224,12 +265,44 @@ PYEOF
     "$OUT/wl" 2>/dev/null | grep -i "hud" | tee -a "$OUT/parity.txt"
     pkill -9 -f "bookmark_hud.py" 2>/dev/null
   fi
-  [ -f "$RT/proxy_bridge.log" ] && { echo "--- wrapper log ---" | tee -a "$OUT/parity.txt"; tail -30 "$RT/proxy_bridge.log" | tee -a "$OUT/parity.txt"; }
-  echo "--- hud windows ---" | tee -a "$OUT/parity.txt"
-  "$OUT/wl" 2>/dev/null | grep -i "hud" | tee -a "$OUT/parity.txt"
-  for f in "$ud/hud.log" "$data/hud.log" "$data/bookmark_hud.log" "$RT/ShardX.log"; do
-    if [ -f "$f" ]; then echo "--- log: $f" | tee -a "$OUT/parity.txt"; tail -12 "$f" | tee -a "$OUT/parity.txt"; fi
+  echo "--- wrapper / helper logs ---" | tee -a "$OUT/parity.txt"
+  for f in "$HOME/Library/Logs/M&A"/*.log "$HOME/Library/Application Support/shardx-launcher/shardx_wrapper.log" /tmp/shardx_wrapper.log "$RT/proxy_bridge.log"; do
+    [ -f "$f" ] || continue
+    echo "--- log: $f" | tee -a "$OUT/parity.txt"
+    tail -40 "$f" | tee -a "$OUT/parity.txt"
   done
+  echo "--- hud log (data root copy) ---" | tee -a "$OUT/parity.txt"
+  tail -30 "$data/runtime/bookmark_hud.log" 2>/dev/null | tee -a "$OUT/parity.txt"
+  echo "--- hud windows ---" | tee -a "$OUT/parity.txt"
+  local HUD_WL
+  HUD_WL=$("$OUT/wl" 2>/dev/null | grep -iE "ython|M&A HUD|hud")
+  printf '%s\n' "$HUD_WL" | tee -a "$OUT/parity.txt"
+  if ps -Ao command | grep -q "[b]ookmark_hud.py" && printf '%s\n' "$HUD_WL" | grep -qE "WIN"; then
+    echo "VERDICT D2 HUD panel: PASS (process alive, panel window on screen)" | tee -a "$OUT/parity.txt"
+  elif ps -Ao command | grep -q "[b]ookmark_hud.py"; then
+    echo "VERDICT D2 HUD panel: PARTIAL (process alive, no window listed)" | tee -a "$OUT/parity.txt"
+  else
+    echo "VERDICT D2 HUD panel: FAIL (no bookmark_hud process)" | tee -a "$OUT/parity.txt"
+  fi
+
+  # --- D1: drag the window from its top strip (only the first mobile case) ---
+  if [ "$case_name" = "mob" ] && [ -x "$OUT/dragwin" ] && [ -n "$wid" ]; then
+    echo "--- drag probe ---" | tee -a "$OUT/parity.txt"
+    local DRAG_OUT b_y a_y
+    DRAG_OUT=$("$OUT/dragwin" "$wid" 2>&1)
+    printf '%s\n' "$DRAG_OUT" | tee -a "$OUT/parity.txt"
+    echo "--- overlay log (drag markers) ---" | tee -a "$OUT/parity.txt"
+    grep -aE "drag|clamped" "$ud/shardx_overlay.log" 2>/dev/null | tail -12 | tee -a "$OUT/parity.txt"
+    b_y=$(printf '%s\n' "$DRAG_OUT" | sed -n 's/^BEFORE .*y=\([-0-9]*\).*/\1/p' | head -1)
+    a_y=$(printf '%s\n' "$DRAG_OUT" | sed -n 's/^AFTER .*y=\([-0-9]*\).*/\1/p' | head -1)
+    if [ -n "$b_y" ] && [ -n "$a_y" ] && [ "$a_y" != "$b_y" ]; then
+      echo "VERDICT D1 window drag: PASS (y $b_y -> $a_y)" | tee -a "$OUT/parity.txt"
+    elif grep -aq "window drag start" "$ud/shardx_overlay.log" 2>/dev/null; then
+      echo "VERDICT D1 window drag: PASS (hook took the drag, window moved off-capture)" | tee -a "$OUT/parity.txt"
+    else
+      echo "VERDICT D1 window drag: INCONCLUSIVE (synthetic CGEvents may need Accessibility; hook markers above)" | tee -a "$OUT/parity.txt"
+    fi
+  fi
   kill_profile
 }
 
