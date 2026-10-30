@@ -89,7 +89,7 @@ run_case() {
   # The wrapper derives its data root as <udd>/../.. and spawns the HUD from
   # <data root>/runtime, so the probe has to mirror the real layout
   # (MA DATA/user-data/<uuid>) instead of a bare /tmp dir.
-  local data="$OUT/data"
+  local data="/tmp/ma_parity_data"
   mkdir -p "$data/user-data"
   [ -e "$data/runtime" ] || ln -s "/Applications/M&A Antidetect/MA DATA/runtime" "$data/runtime"
   local ud="$data/user-data/$case_name"
@@ -158,6 +158,9 @@ PY
   echo "$case_name|$cp|$wid|$wx|$wy|$ww|$wh" >> "$OUT/windows.tsv"
   echo "--- hud processes ---" | tee -a "$OUT/parity.txt"
   ps -Ao pid,command | grep -i "bookmark_hud" | grep -v grep | head -3 | tee -a "$OUT/parity.txt"
+  ps -Ao pid,command | grep -i "python3" | grep -v grep | head -4 | tee -a "$OUT/parity.txt"
+  ls -d "$RT/python/bin/python3" 2>&1 | tee -a "$OUT/parity.txt"
+  [ -f "$RT/proxy_bridge.log" ] && { echo "--- wrapper log ---" | tee -a "$OUT/parity.txt"; tail -30 "$RT/proxy_bridge.log" | tee -a "$OUT/parity.txt"; }
   echo "--- hud windows ---" | tee -a "$OUT/parity.txt"
   "$OUT/wl" 2>/dev/null | grep -i "hud" | tee -a "$OUT/parity.txt"
   for f in "$ud/hud.log" "$data/hud.log" "$data/bookmark_hud.log" "$RT/ShardX.log"; do
