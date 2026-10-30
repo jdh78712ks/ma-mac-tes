@@ -68,11 +68,13 @@ func post(_ t: CGEventType, _ p: CGPoint) {
 }
 post(.leftMouseDown, CGPoint(x: sx, y: sy))
 usleep(150000)
+// Horizontal on purpose: the profile window is nearly as tall as the screen, so
+// a vertical drag can only move 2-3 px before the on-screen clamp stops it.
 for i in 1...10 {
-    post(.leftMouseDragged, CGPoint(x: sx, y: sy + CGFloat(i) * 8))
+    post(.leftMouseDragged, CGPoint(x: sx + CGFloat(i) * 6, y: sy))
     usleep(35000)
 }
-post(.leftMouseUp, CGPoint(x: sx, y: sy + 80))
+post(.leftMouseUp, CGPoint(x: sx + 60, y: sy))
 usleep(250000)
 if let g = frame(wid) {
     print("AFTER x=\(Int(g.origin.x)) y=\(Int(g.origin.y)) w=\(Int(g.size.width)) h=\(Int(g.size.height))")
@@ -248,37 +250,33 @@ PYEOF
   "$PY" /tmp/tk_test.py 2>&1 | head -12 | tee -a "$OUT/parity.txt"
   echo "tk rc=${PIPESTATUS[0]}" | tee -a "$OUT/parity.txt"
   osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>&1 | head -2 | tee -a "$OUT/parity.txt"
-  if [ "$case_name" = "mob" ]; then
-    echo "--- manual hud run ---" | tee -a "$OUT/parity.txt"
-    mkdir -p /tmp/hudcopy
-    cp "$data/runtime"/*.py "$data/runtime"/*.dylib /tmp/hudcopy/ 2>/dev/null
-    rm -f /tmp/hudcopy/bookmark_hud.log
-    "$PY" /tmp/hudcopy/bookmark_hud.py "$prof_id" "$data" alex "$cp" >/tmp/hud_manual.log 2>&1 &
-    local hud_pid=$!
-    sleep 8
-    if ps -p "$hud_pid" >/dev/null 2>&1; then echo "hud alive after 8s (pid $hud_pid)" | tee -a "$OUT/parity.txt"; else wait "$hud_pid"; echo "hud exited rc=$?" | tee -a "$OUT/parity.txt"; fi
-    kill -9 "$hud_pid" 2>/dev/null || true
-    head -20 /tmp/hud_manual.log | tee -a "$OUT/parity.txt"
-    echo "--- hud log ---" | tee -a "$OUT/parity.txt"
-    head -25 /tmp/hudcopy/bookmark_hud.log 2>&1 | tee -a "$OUT/parity.txt"
-    ps -Ao pid,command | grep "bookmark_hud" | grep -v grep | head -3 | tee -a "$OUT/parity.txt"
-    "$OUT/wl" 2>/dev/null | grep -i "hud" | tee -a "$OUT/parity.txt"
-    pkill -9 -f "bookmark_hud.py" 2>/dev/null
-  fi
+  # A manual HUD run used to live here; it ran `pkill -9 -f bookmark_hud.py`
+  # and killed the wrapper-spawned panel it was supposed to compare against.
+  # The wrapper's own HUD is now observable through its log and exit status.
+  screencapture -x "$OUT/${case_name}_desktop.png" 2>/dev/null
   echo "--- wrapper / helper logs ---" | tee -a "$OUT/parity.txt"
   for f in "$HOME/Library/Logs/M&A"/*.log "$HOME/Library/Application Support/shardx-launcher/shardx_wrapper.log" /tmp/shardx_wrapper.log "$RT/proxy_bridge.log"; do
     [ -f "$f" ] || continue
     echo "--- log: $f" | tee -a "$OUT/parity.txt"
     tail -40 "$f" | tee -a "$OUT/parity.txt"
   done
-  echo "--- hud log (data root copy) ---" | tee -a "$OUT/parity.txt"
-  tail -30 "$data/runtime/bookmark_hud.log" 2>/dev/null | tee -a "$OUT/parity.txt"
+  echo "--- hud log (writable state dir) ---" | tee -a "$OUT/parity.txt"
+  for f in "$data/runtime/hud_state/bookmark_hud.log" "$data/runtime/bookmark_hud.log" "$HOME/Library/Caches/M&A/hud_state/bookmark_hud.log"; do
+    [ -f "$f" ] || continue
+    echo "--- log: $f" | tee -a "$OUT/parity.txt"
+    tail -40 "$f" | tee -a "$OUT/parity.txt"
+  done
   echo "--- hud windows ---" | tee -a "$OUT/parity.txt"
   local HUD_WL
   HUD_WL=$("$OUT/wl" 2>/dev/null | grep -iE "ython|M&A HUD|hud")
   printf '%s\n' "$HUD_WL" | tee -a "$OUT/parity.txt"
   if ps -Ao command | grep -q "[b]ookmark_hud.py" && printf '%s\n' "$HUD_WL" | grep -qE "WIN"; then
-    echo "VERDICT D2 HUD panel: PASS (process alive, panel window on screen)" | tee -a "$OUT/parity.txt"
+    # The rail must sit just right of the profile window, not on top of the page.
+    local hud_right_of_win=0
+    if [ -n "$ww" ]; then
+      hud_right_of_win=$(printf '%s\n' "$HUD_WL" | awk -F'\t' -v wr=$((wx + ww)) '$4==3 && $6 >= wr - 2 {c++} END{print c+0}')
+    fi
+    echo "VERDICT D2 HUD panel: PASS (process alive, panel window on screen, right_of_window=$hud_right_of_win)" | tee -a "$OUT/parity.txt"
   elif ps -Ao command | grep -q "[b]ookmark_hud.py"; then
     echo "VERDICT D2 HUD panel: PARTIAL (process alive, no window listed)" | tee -a "$OUT/parity.txt"
   else
@@ -293,10 +291,10 @@ PYEOF
     printf '%s\n' "$DRAG_OUT" | tee -a "$OUT/parity.txt"
     echo "--- overlay log (drag markers) ---" | tee -a "$OUT/parity.txt"
     grep -aE "drag|clamped" "$ud/shardx_overlay.log" 2>/dev/null | tail -12 | tee -a "$OUT/parity.txt"
-    b_y=$(printf '%s\n' "$DRAG_OUT" | sed -n 's/^BEFORE .*y=\([-0-9]*\).*/\1/p' | head -1)
-    a_y=$(printf '%s\n' "$DRAG_OUT" | sed -n 's/^AFTER .*y=\([-0-9]*\).*/\1/p' | head -1)
+    b_y=$(printf '%s\n' "$DRAG_OUT" | sed -n 's/^BEFORE x=\([-0-9]*\).*/\1/p' | head -1)
+    a_y=$(printf '%s\n' "$DRAG_OUT" | sed -n 's/^AFTER x=\([-0-9]*\).*/\1/p' | head -1)
     if [ -n "$b_y" ] && [ -n "$a_y" ] && [ "$a_y" != "$b_y" ]; then
-      echo "VERDICT D1 window drag: PASS (y $b_y -> $a_y)" | tee -a "$OUT/parity.txt"
+      echo "VERDICT D1 window drag: PASS (x $b_y -> $a_y)" | tee -a "$OUT/parity.txt"
     elif grep -aq "window drag start" "$ud/shardx_overlay.log" 2>/dev/null; then
       echo "VERDICT D1 window drag: PASS (hook took the drag, window moved off-capture)" | tee -a "$OUT/parity.txt"
     else
