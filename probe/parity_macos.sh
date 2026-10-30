@@ -47,8 +47,9 @@ for w in all {
 SW
 swiftc -O "$OUT/wl.swift" -o "$OUT/wl" 2>"$OUT/swiftc.log"
 
-# --- deterministic page + CDP navigation ----------------------------------
-cat > /tmp/parity_page.html <<'HTML'
+# --- deterministic page (served locally, set as the profile start_url) -----
+mkdir -p /tmp/parityweb
+cat > /tmp/parityweb/parity.html <<'HTML'
 <!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 html,body{margin:0;background:#ffffff;color:#111;font:600 30px -apple-system,sans-serif}
@@ -60,32 +61,9 @@ p{margin:8px 0 0 56px;font-weight:400;font-size:20px}
 <div class="band"></div><div class="box"></div>
 <h1>PARITY</h1><p>deterministic white page, red 36 px band</p>
 HTML
-cat > "$OUT/nav.py" <<'PY'
-import json, sys, time, urllib.request
-port, url = sys.argv[1], sys.argv[2]
-try:
-    import websocket
-except Exception:
-    raise SystemExit("no websocket-client")
-for _ in range(20):
-    try:
-        lst = json.load(urllib.request.urlopen("http://127.0.0.1:%s/json/list" % port, timeout=3))
-        pages = [t for t in lst if t.get("type") == "page" and t.get("webSocketDebuggerUrl")]
-        if pages:
-            break
-    except Exception:
-        pass
-    time.sleep(1)
-else:
-    raise SystemExit("no page target")
-ws = websocket.create_connection(pages[0]["webSocketDebuggerUrl"], timeout=10,
-                                 origin="http://127.0.0.1:%s" % port)
-ws.send(json.dumps({"id": 1, "method": "Page.navigate", "params": {"url": url}}))
-print(ws.recv()[:160])
-ws.close()
-PY
-python3 -m pip install --quiet --user websocket-client 2>/dev/null || \
-  python3 -m pip install --quiet --break-system-packages websocket-client 2>/dev/null || true
+( cd /tmp/parityweb && python3 -m http.server 8799 >/dev/null 2>&1 & )
+sleep 1
+curl -fsS http://127.0.0.1:8799/parity.html -o /dev/null && echo "local page server: ok" | tee -a "$OUT/parity.txt"
 
 list_windows() {  # $1 = label ; $2 = optional pid filter
   echo "--- windows: $1 ---" | tee -a "$OUT/parity.txt"
@@ -114,6 +92,14 @@ run_case() {
 
   if [ "$with_fp" = "yes" ]; then
     cp "$FP_FILE" "$ud/fingerprint.json"
+    python3 - "$ud/fingerprint.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d["start_url"] = "http://127.0.0.1:8799/parity.html"
+json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False)
+print("start_url ->", d["start_url"])
+PY
     echo "fingerprint: $(basename "$FP_FILE")" | tee -a "$OUT/parity.txt"
   fi
 
@@ -121,9 +107,7 @@ run_case() {
       --window-size=534,969 --remote-debugging-port="$PORT" --remote-allow-origins='*' about:blank \
       >"$OUT/${case_name}.log" 2>&1 & )
 
-  sleep 10
-  python3 "$OUT/nav.py" "$PORT" "file:///tmp/parity_page.html" >>"$OUT/parity.txt" 2>&1
-  sleep 6
+  sleep 16
   local cp
   cp=$(pgrep -x ShardX_core | head -1)
   echo "--- case $case_name: core=${cp:-none} ---" | tee -a "$OUT/parity.txt"
@@ -163,7 +147,7 @@ run_case() {
   fi
 
   echo "--- overlay debug ---" | tee -a "$OUT/parity.txt"
-  cat "$ud/shardx_overlay.log" 2>/dev/null | tail -28 | tee -a "$OUT/parity.txt"
+  cat "$ud/shardx_overlay.log" 2>/dev/null | tail -80 | tee -a "$OUT/parity.txt"
   list_windows "$case_name (all)" 0 >/dev/null
   echo "$case_name|$cp|$wid|$wx|$wy|$ww|$wh" >> "$OUT/windows.tsv"
   kill_profile
