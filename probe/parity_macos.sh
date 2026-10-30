@@ -159,7 +159,18 @@ PY
   echo "--- hud processes ---" | tee -a "$OUT/parity.txt"
   ps -Ao pid,command | grep -i "bookmark_hud" | grep -v grep | head -3 | tee -a "$OUT/parity.txt"
   ps -Ao pid,command | grep -i "python3" | grep -v grep | head -4 | tee -a "$OUT/parity.txt"
-  ls -d "$RT/python/bin/python3" 2>&1 | tee -a "$OUT/parity.txt"
+  PY="/Applications/M&A Antidetect/MA DATA/runtime/python/bin/python3"
+  ls -l "$PY" 2>&1 | tee -a "$OUT/parity.txt"
+  "$PY" -c "import sys; print('python', sys.version.split()[0]); import tkinter; print('tk', tkinter.TkVersion)" 2>&1 | head -4 | tee -a "$OUT/parity.txt"
+  if [ "$case_name" = "mob" ]; then
+    echo "--- manual hud run ---" | tee -a "$OUT/parity.txt"
+    ( "$PY" "$data/runtime/bookmark_hud.py" "$case_name" "$data" alex "$cp" >/tmp/hud_manual.log 2>&1 & )
+    sleep 7
+    head -30 /tmp/hud_manual.log | tee -a "$OUT/parity.txt"
+    ps -Ao pid,command | grep "bookmark_hud" | grep -v grep | head -3 | tee -a "$OUT/parity.txt"
+    "$OUT/wl" 2>/dev/null | grep -i "hud" | tee -a "$OUT/parity.txt"
+    pkill -9 -f "bookmark_hud.py" 2>/dev/null
+  fi
   [ -f "$RT/proxy_bridge.log" ] && { echo "--- wrapper log ---" | tee -a "$OUT/parity.txt"; tail -30 "$RT/proxy_bridge.log" | tee -a "$OUT/parity.txt"; }
   echo "--- hud windows ---" | tee -a "$OUT/parity.txt"
   "$OUT/wl" 2>/dev/null | grep -i "hud" | tee -a "$OUT/parity.txt"
