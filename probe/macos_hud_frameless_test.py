@@ -31,6 +31,7 @@ import sys
 import tempfile
 
 RESIZE_BITS = (1 << 1) | (1 << 2) | (1 << 3)  # Closable, Miniaturizable, Resizable
+FULLSIZE_CONTENT = 1 << 15
 
 
 def fail(msg):
@@ -107,7 +108,7 @@ def main():
     if not resizable_before:
         fail("the Tk probe window started without any window chrome - check would be vacuous")
 
-    info = mac_compat.strip_window_chrome()
+    info = mac_compat.strip_window_chrome(bg="#0d0d13")
     if not info or not info.get("ok"):
         fail("strip_window_chrome() failed: %s" % (info or {}).get("error"))
     print("strip: ok windows=%s stripped=%s" % (info.get("windows"), info.get("stripped")))
@@ -120,9 +121,13 @@ def main():
         # and the HUD search field must keep taking input.
         fail("Titled bit was dropped from every window: %s"
              % ",".join("0x%x" % w["mask"] for w in after))
+    if not any(w["mask"] & FULLSIZE_CONTENT for w in after):
+        fail("no window got FullSizeContentView - the rail would show a title-bar band")
     for w in after:
         if w["mask"] & RESIZE_BITS:
             fail("resize chrome bits survived: 0x%x" % w["mask"])
+        if (w["mask"] & (1 << 0)) and not (w["mask"] & FULLSIZE_CONTENT):
+            fail("titled window left without FullSizeContentView: 0x%x" % w["mask"])
         if w["title_vis"] != 1:
             fail("titleVisibility is not NSWindowTitleHidden: %s" % w["title_vis"])
         if not w["transparent"]:
