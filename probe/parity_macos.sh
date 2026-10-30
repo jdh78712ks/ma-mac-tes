@@ -92,7 +92,23 @@ run_case() {
   local data="/tmp/ma_parity_data"
   mkdir -p "$data/user-data"
   [ -e "$data/runtime" ] || ln -s "/Applications/M&A Antidetect/MA DATA/runtime" "$data/runtime"
-  local ud="$data/user-data/$case_name"
+  # A real profile id is required: bookmark_hud.py looks up
+  # profiles/<id>.json and the browser window by that id, and exits when the
+  # id is a probe label like "mob".
+  local src_prof
+  src_prof=$(ls "/Applications/M&A Antidetect/MA DATA/profiles"/*.json 2>/dev/null | head -1)
+  local prof_id
+  prof_id=$(basename "$src_prof" .json)
+  mkdir -p "$data/profiles"
+  cp "$src_prof" "$data/profiles/$prof_id.json"
+  python3 - "$data/profiles/$prof_id.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p, encoding="utf-8"))
+d["start_url"] = "http://127.0.0.1:8799/parity.html"
+json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False)
+PY
+  local ud="$data/user-data/$prof_id"
   rm -rf "$ud"; mkdir -p "$ud"
   kill_profile
 
