@@ -56,6 +56,17 @@ jobs:
           codesign --force --sign - "$RT/ShardX"
           echo "codesign rc done"
 
+      - name: 2b. The HUD must be a frameless panel (native AppKit check)
+        run: |
+          set +e
+          mkdir -p /tmp/ma_parity
+          RT="/Applications/M&A Antidetect/MA DATA/runtime"
+          PY="$RT/python/bin/python3"
+          [ -x "$PY" ] || PY=python3
+          chmod +x probe/macos_hud_frameless_test.py
+          "$PY" probe/macos_hud_frameless_test.py "$RT" 2>&1 | tee /tmp/ma_parity/frameless.txt
+          echo "frameless test exit=${PIPESTATUS[0]}"
+
       - name: 3. Run the parity probe
         env:
           OUT: /tmp/ma_parity
