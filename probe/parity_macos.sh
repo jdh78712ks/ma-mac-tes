@@ -57,6 +57,8 @@ list_windows() {  # $1 = label ; $2 = optional pid filter
 }
 
 kill_profile() {
+  pkill -9 -f "M&A Launcher.app" 2>/dev/null
+  pkill -9 -f shardx-launcher 2>/dev/null
   pkill -9 -x ShardX_core 2>/dev/null
   pkill -9 -f "ShardX-Mac-arm64/ShardX" 2>/dev/null
   pkill -9 -f "bookmark_hud.py" 2>/dev/null
@@ -85,7 +87,16 @@ run_case() {
   echo "--- case $case_name: core=${cp:-none} ---" | tee -a "$OUT/parity.txt"
   if [ -z "$cp" ]; then
     echo "VERDICT $case_name: FAIL (core not running)" | tee -a "$OUT/parity.txt"
-    tail -20 "$OUT/${case_name}.log" | tee -a "$OUT/parity.txt"
+    echo "--- wrapper log ---" | tee -a "$OUT/parity.txt"
+    tail -40 "$RT/ShardX.log" 2>/dev/null | tee -a "$OUT/parity.txt"
+    echo "--- launch_error ---" | tee -a "$OUT/parity.txt"
+    cat "$ud/launch_error.txt" 2>/dev/null | tee -a "$OUT/parity.txt"
+    echo "--- marker ---" | tee -a "$OUT/parity.txt"
+    cat "$ud/window_ready" 2>/dev/null | tee -a "$OUT/parity.txt"
+    echo "--- crash reports ---" | tee -a "$OUT/parity.txt"
+    ls -t "$HOME/Library/Logs/DiagnosticReports" 2>/dev/null | head -3 | tee -a "$OUT/parity.txt"
+    newest=$(ls -t "$HOME/Library/Logs/DiagnosticReports"/*.ips 2>/dev/null | head -1)
+    [ -n "$newest" ] && head -80 "$newest" | tee -a "$OUT/parity.txt"
     return
   fi
 
