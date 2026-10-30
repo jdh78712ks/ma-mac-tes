@@ -108,6 +108,15 @@ d = json.load(open(p, encoding="utf-8"))
 d["start_url"] = "http://127.0.0.1:8799/parity.html"
 json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False)
 PY
+  local prof_sw
+  prof_sw=$(python3 - "$data/profiles/$prof_id.json" <<'PYW'
+import json, sys
+d = json.load(open(sys.argv[1], encoding="utf-8"))
+w = (d.get("screen") or {}).get("width")
+print(int(w) if isinstance(w, (int, float)) else 0)
+PYW
+)
+  echo "$prof_sw" > "$OUT/mob_screen_w.txt"
   local ud="$data/user-data/$prof_id"
   rm -rf "$ud"; mkdir -p "$ud"
   kill_profile
@@ -194,9 +203,14 @@ PYEOF
   osascript -e 'tell application "System Events" to get name of every process whose background only is false' 2>&1 | head -2 | tee -a "$OUT/parity.txt"
   if [ "$case_name" = "mob" ]; then
     echo "--- manual hud run ---" | tee -a "$OUT/parity.txt"
-    ( "$PY" "$data/runtime/bookmark_hud.py" "$case_name" "$data" alex "$cp" >/tmp/hud_manual.log 2>&1 & )
-    sleep 7
-    head -30 /tmp/hud_manual.log | tee -a "$OUT/parity.txt"
+    mkdir -p /tmp/hudcopy
+    cp "$data/runtime"/*.py /tmp/hudcopy/ 2>/dev/null
+    rm -f /tmp/hudcopy/bookmark_hud.log
+    timeout 8 "$PY" /tmp/hudcopy/bookmark_hud.py "$prof_id" "$data" alex "$cp" >/tmp/hud_manual.log 2>&1
+    echo "hud rc=$?" | tee -a "$OUT/parity.txt"
+    head -20 /tmp/hud_manual.log | tee -a "$OUT/parity.txt"
+    echo "--- hud log ---" | tee -a "$OUT/parity.txt"
+    head -25 /tmp/hudcopy/bookmark_hud.log 2>&1 | tee -a "$OUT/parity.txt"
     ps -Ao pid,command | grep "bookmark_hud" | grep -v grep | head -3 | tee -a "$OUT/parity.txt"
     "$OUT/wl" 2>/dev/null | grep -i "hud" | tee -a "$OUT/parity.txt"
     pkill -9 -f "bookmark_hud.py" 2>/dev/null
@@ -282,7 +296,11 @@ def analyse(path, mobile):
         # Windows pads it with a 132 px dark frame, but repainting that area in
         # Chromium on macOS makes AppKit drop the compositor surface, so there
         # is no strip at all and the page must fill the window edge to edge.
-        ok_size = abs(w - 402) <= 6
+        try:
+            want_w = int(open("/tmp/ma_parity/mob_screen_w.txt").read().strip() or 0)
+        except Exception:
+            want_w = 0
+        ok_size = want_w > 0 and abs(w - want_w) <= 6
         page_px = 0
         for y in range(100, h - 20, 4):
             for x in range(0, w, 2):
@@ -292,7 +310,7 @@ def analyse(path, mobile):
         sampled = len(range(100, h - 20, 4)) * len(range(0, w, 2))
         fill = 100.0 * page_px / sampled
         print("  page coverage below the toolbar: %.0f%%" % fill)
-        print("  VERDICT D4 window width == screen width 402: %s" % ("PASS" if ok_size else "FAIL"))
+        print("  VERDICT D4 window width == screen width %d: %s" % (want_w, "PASS" if ok_size else "FAIL"))
         print("  VERDICT D3 page fills the window (no side gaps): %s" % (
             "PASS" if fill > 80.0 else "FAIL"))
     else:
