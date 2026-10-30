@@ -80,6 +80,8 @@ if let g = frame(wid) {
     print("AFTER x=\(Int(g.origin.x)) y=\(Int(g.origin.y)) w=\(Int(g.size.width)) h=\(Int(g.size.height))")
 } else { print("NOFRAME_AFTER") }
 SW
+swiftc -O "$OUT/dragwin.swift" -o "$OUT/dragwin" 2>>"$OUT/swiftc.log"
+
 # --- synthetic click inside the toolbar chip zones -------------------------
 cat > "$OUT/clickwin.swift" <<'SW'
 import Cocoa
@@ -307,7 +309,8 @@ PYEOF
   fi
 
   # --- D1: drag the window from its top strip (only the first mobile case) ---
-  if [ "$case_name" = "mob" ] && [ -x "$OUT/dragwin" ] && [ -n "$wid" ]; then
+  if [ "$case_name" = "mob" ] && [ -n "$wid" ]; then
+   if [ -x "$OUT/dragwin" ]; then
     echo "--- drag probe ---" | tee -a "$OUT/parity.txt"
     local DRAG_OUT b_y a_y
     DRAG_OUT=$("$OUT/dragwin" "$wid" 2>&1)
@@ -323,6 +326,7 @@ PYEOF
     else
       echo "VERDICT D1 window drag: INCONCLUSIVE (synthetic CGEvents may need Accessibility; hook markers above)" | tee -a "$OUT/parity.txt"
     fi
+   fi
 
     # Chip clicks: window was just dragged +60 px, so offsets are taken from the
     # live frame. 65 px from the right edge = LINK, 106 px = bookmarks chevron.
