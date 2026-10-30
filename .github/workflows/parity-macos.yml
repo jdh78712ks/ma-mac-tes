@@ -1,0 +1,75 @@
+name: macOS parity probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: 'Direct URL of M&A-Setup-macOS.zip (empty = latest release)'
+        required: false
+        default: ''
+
+jobs:
+  parity:
+    name: Parity (window / strip / HUD / chips)
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - name: Checkout probe sources
+        uses: actions/checkout@v4
+
+      - name: 1. Install the payload (headless CLI installer)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ZIP_URL: ${{ inputs.zip_url }}
+        run: |
+          set -e
+          mkdir -p /tmp/ma_installer
+          cd /tmp/ma_installer
+          if [ -n "$ZIP_URL" ]; then
+            curl -L --fail -o setup.zip "$ZIP_URL"
+          else
+            gh release download --repo "$GITHUB_REPOSITORY" --pattern "*.zip" --dir . --clobber
+            ZIP=$(ls *.zip | head -1)
+            [ -f setup.zip ] || cp "$ZIP" setup.zip
+          fi
+          ls -lh setup.zip
+          /usr/bin/ditto -x -k setup.zip extracted
+          SETUP_APP=$(find extracted -maxdepth 2 -name "M&A-Setup.app" | head -1)
+          echo "setup app: $SETUP_APP"
+          chmod +x "$SETUP_APP/Contents/MacOS/M&A-Setup"
+          xattr -cr "$SETUP_APP"
+          sudo "$SETUP_APP/Contents/MacOS/M&A-Setup" --cli || true
+          sleep 3
+          ls -la "/Applications/M&A Antidetect" || true
+
+      - name: 2. Re-sign the injected hook and the browser entry points
+        run: |
+          set +e
+          APP="/Applications/M&A Antidetect"
+          RT="$APP/MA DATA/runtime/ShardX-Mac-arm64"
+          xattr -cr "$APP" 2>/dev/null
+          codesign --force --sign - "$APP/MA DATA/runtime/libshardx_hook.dylib"
+          codesign --force --sign - "$RT/ShardX.app/Contents/MacOS/libshardx_hook.dylib"
+          codesign --force --sign - "$RT/ShardX.app/Contents/MacOS/ShardX_core"
+          codesign --force --sign - "$RT/ShardX.app/Contents/MacOS/ShardX"
+          codesign --force --deep --sign - "$RT/ShardX.app"
+          codesign --force --sign - "$RT/ShardX"
+          echo "codesign rc done"
+
+      - name: 3. Run the parity probe
+        env:
+          OUT: /tmp/ma_parity
+        run: |
+          set +e
+          chmod +x probe/parity_macos.sh
+          bash probe/parity_macos.sh
+          echo "probe exit=$?"
+          cat /tmp/ma_parity/parity.txt || true
+
+      - name: 4. Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-parity
+          path: /tmp/ma_parity
+          if-no-files-found: ignore
