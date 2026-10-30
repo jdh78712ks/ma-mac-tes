@@ -64,6 +64,12 @@ HTML
 ( cd /tmp/parityweb && python3 -m http.server 8799 >/dev/null 2>&1 & )
 sleep 1
 curl -fsS http://127.0.0.1:8799/parity.html -o /dev/null && echo "local page server: ok" | tee -a "$OUT/parity.txt"
+mkdir -p /tmp/ma_parity_data
+echo '{"helper_enabled": true}' > /tmp/ma_parity_data/settings.json
+echo "--- launcher settings ---" | tee -a "$OUT/parity.txt"
+cat "$HOME/Library/Application Support/shardx-launcher/settings.json" 2>&1 | head -5 | tee -a "$OUT/parity.txt"
+echo "--- helper dylib ---" | tee -a "$OUT/parity.txt"
+ls -l "/Applications/M&A Antidetect/MA DATA/runtime/libmac_win_helper.dylib" 2>&1 | tee -a "$OUT/parity.txt"
 
 list_windows() {  # $1 = label ; $2 = optional pid filter
   echo "--- windows: $1 ---" | tee -a "$OUT/parity.txt"
@@ -204,7 +210,7 @@ PYEOF
   if [ "$case_name" = "mob" ]; then
     echo "--- manual hud run ---" | tee -a "$OUT/parity.txt"
     mkdir -p /tmp/hudcopy
-    cp "$data/runtime"/*.py /tmp/hudcopy/ 2>/dev/null
+    cp "$data/runtime"/*.py "$data/runtime"/*.dylib /tmp/hudcopy/ 2>/dev/null
     rm -f /tmp/hudcopy/bookmark_hud.log
     "$PY" /tmp/hudcopy/bookmark_hud.py "$prof_id" "$data" alex "$cp" >/tmp/hud_manual.log 2>&1 &
     local hud_pid=$!
