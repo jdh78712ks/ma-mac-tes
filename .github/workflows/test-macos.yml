@@ -609,10 +609,17 @@ jobs:
           EOF
 
           echo "Компиляция высокоскоростного движка ввода и захвата экрана (CoreGraphics 30 FPS)..."
-          clang -O3 -framework ApplicationServices -framework ImageIO -framework CoreServices /tmp/mac_fast.c -o /tmp/mac_fast
+          clang -O3 -mmacosx-version-min=14.0 -framework ApplicationServices -framework ImageIO -framework CoreServices /tmp/mac_fast.c -o /tmp/mac_fast || \n          clang -O3 -mmacosx-version-min=13.0 -framework ApplicationServices -framework ImageIO -framework CoreServices /tmp/mac_fast.c -o /tmp/mac_fast
 
           # Запуск демона захвата 30 FPS в фоне
           nohup /tmp/mac_fast daemon /tmp/live_frame.jpg >/dev/null 2>&1 &
+          # Если демон захвата не поднялся (сборка/рантайм-отказ API) — кадры через screencapture
+          ( for i in 1 2 3 4 5 6; do
+              sleep 2
+              if pgrep -x mac_fast >/dev/null 2>&1; then exit 0; fi
+            done
+            echo "mac_fast daemon missing - screencapture fallback engaged" >> /tmp/ma_stream_fallback.log
+            while true; do screencapture -x -t jpg /tmp/live_frame.jpg 2>/dev/null; sleep 0.3; done ) >/dev/null 2>&1 &
 
           cat << 'EOF' > /tmp/web_desk.py
           import os, sys, time, json, threading, subprocess
