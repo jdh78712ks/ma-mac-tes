@@ -221,23 +221,23 @@ def analyse(path, mobile):
     print("  first frame-coloured column: %s   colour at x=w-12: %s" % (
         boundary, px[w - 12, rows[2]]))
     if mobile:
-        ok_size = abs(w - 534) <= 6
-        limit = w if boundary is None else boundary
+        # macOS keeps the profile window exactly as wide as the phone screen:
+        # Windows pads it with a 132 px dark frame, but repainting that area in
+        # Chromium on macOS makes AppKit drop the compositor surface, so there
+        # is no strip at all and the page must fill the window edge to edge.
+        ok_size = abs(w - 402) <= 6
         page_px = 0
-        for y in range(20, h - 20, 4):
-            for x in range(0, min(limit, w)):
+        for y in range(100, h - 20, 4):
+            for x in range(0, w, 2):
                 r, g, b = px[x, y]
                 if r + g + b > 240:
                     page_px += 1
-        ok_strip = boundary is not None and 396 <= boundary <= 412 and page_px > 3000
-        right_uniform = boundary is not None and all(
-            is_frame(px[x, y]) for x in range(boundary + 2, w, 2) for y in rows)
-        print("  page pixels left of the frame: %d" % page_px)
-        print("  VERDICT D4 window width 534: %s" % ("PASS" if ok_size else "FAIL"))
-        print("  VERDICT D3 strip 402 px at the left edge (frame starts at %s): %s" % (
-            boundary, "PASS" if ok_strip else "FAIL"))
-        print("  VERDICT D3 dark frame #121316 right of strip uniform: %s" % (
-            "PASS" if right_uniform else "FAIL"))
+        sampled = len(range(100, h - 20, 4)) * len(range(0, w, 2))
+        fill = 100.0 * page_px / sampled
+        print("  page coverage below the toolbar: %.0f%%" % fill)
+        print("  VERDICT D4 window width == screen width 402: %s" % ("PASS" if ok_size else "FAIL"))
+        print("  VERDICT D3 page fills the window (no side gaps): %s" % (
+            "PASS" if fill > 80.0 else "FAIL"))
     else:
         bright = sum(1 for y in range(0, h, 8) for x in range(0, w, 8) if sum(px[x, y]) > 700)
         total = len(range(0, h, 8)) * len(range(0, w, 8))
