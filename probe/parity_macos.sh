@@ -52,7 +52,7 @@ list_windows() {  # $1 = label ; $2 = optional pid filter
   if [ -n "$2" ] && [ "$2" != "0" ]; then
     "$OUT/wl" "$2" 2>/dev/null | tee -a "$OUT/parity.txt"
   else
-    "$OUT/wl" 0 2>/dev/null | grep -vE "^WIN\t-1" | tee -a "$OUT/parity.txt"
+    "$OUT/wl" 2>/dev/null | grep -vE "^WIN\t-1" | tee -a "$OUT/parity.txt"
   fi
 }
 
@@ -150,6 +150,7 @@ run_case mob yes
 run_case desk no
 
 # --- pixel analysis -------------------------------------------------------
+python3 -m pip install --quiet --user pillow 2>/dev/null || python3 -m pip install --quiet --break-system-packages pillow 2>/dev/null || true
 python3 - "$OUT" <<'PY' | tee -a "$OUT/parity.txt"
 import os, sys, glob
 
@@ -177,18 +178,19 @@ def analyse(path, mobile):
         runs.append((cur, w - 1))
     runs = [(a, b) for a, b in runs if b - a >= 40]
     left = px[2, row]
+    right = px[w - 12, row]
     print("IMAGE %s %dx%d" % (os.path.basename(path), w, h))
     print("  white runs at mid-height: %s" % (runs,))
-    print("  colour at x=2: %s" % (left,))
+    print("  colour at x=2: %s   at x=w-12: %s" % (left, right))
     if mobile:
         ok_size = abs(w - 534) <= 6
         ok_left = bool(runs) and runs[0][0] <= 3 and abs((runs[0][1] - runs[0][0] + 1) - 402) <= 6
-        dark = all(c < 60 for c in left)
+        dark = all(c < 60 for c in right)
         print("  VERDICT D4 window width 534: %s" % ("PASS" if ok_size else "FAIL"))
         print("  VERDICT D3 strip at left (x0=%s width=%s): %s" % (
             runs[0][0] if runs else "-", (runs[0][1] - runs[0][0] + 1) if runs else "-",
             "PASS" if ok_left else "FAIL"))
-        print("  VERDICT D3 dark frame #121316: %s (%s)" % ("PASS" if dark else "FAIL", left))
+        print("  VERDICT D3 dark frame #121316 right of strip: %s (%s)" % ("PASS" if dark else "FAIL", right))
     else:
         ok_full = bool(runs) and runs[0][0] <= 3 and (runs[0][1] - runs[0][0] + 1) >= w - 12
         print("  VERDICT desktop page fills window: %s" % ("PASS" if ok_full else "FAIL"))
@@ -224,7 +226,7 @@ PY
 
 # --- HUD presence (any python/tk window on screen) ------------------------
 echo "--- HUD windows ---" | tee -a "$OUT/parity.txt"
-"$OUT/wl" 0 2>/dev/null | awk -F'\t' '$4==0 && ($9 ~ /ython/ || $10 != "" ) {print}' | tee -a "$OUT/parity.txt" | head -20
+"$OUT/wl" 2>/dev/null | awk -F'\t' '$4==0 && ($9 ~ /ython/ || $10 != "" ) {print}' | tee -a "$OUT/parity.txt" | head -20
 
 echo "== done ==" | tee -a "$OUT/parity.txt"
 ls -la "$OUT" | tee -a "$OUT/parity.txt"
