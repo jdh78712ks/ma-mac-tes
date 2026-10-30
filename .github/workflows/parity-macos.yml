@@ -11,7 +11,7 @@ on:
 jobs:
   parity:
     name: Parity (window / strip / HUD / chips)
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 40
     steps:
       - name: Checkout probe sources
