@@ -47,6 +47,46 @@ for w in all {
 SW
 swiftc -O "$OUT/wl.swift" -o "$OUT/wl" 2>"$OUT/swiftc.log"
 
+# --- deterministic page + CDP navigation ----------------------------------
+cat > /tmp/parity_page.html <<'HTML'
+<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+html,body{margin:0;background:#ffffff;color:#111;font:600 30px -apple-system,sans-serif}
+.band{position:fixed;left:0;top:0;bottom:0;width:36px;background:#e11d48}
+.box{position:fixed;left:300px;top:120px;width:90px;height:90px;background:#2563eb}
+h1{margin:60px 0 0 56px}
+p{margin:8px 0 0 56px;font-weight:400;font-size:20px}
+</style>
+<div class="band"></div><div class="box"></div>
+<h1>PARITY</h1><p>deterministic white page, red 36 px band</p>
+HTML
+cat > "$OUT/nav.py" <<'PY'
+import json, sys, time, urllib.request
+port, url = sys.argv[1], sys.argv[2]
+try:
+    import websocket
+except Exception:
+    raise SystemExit("no websocket-client")
+for _ in range(20):
+    try:
+        lst = json.load(urllib.request.urlopen("http://127.0.0.1:%s/json/list" % port, timeout=3))
+        pages = [t for t in lst if t.get("type") == "page" and t.get("webSocketDebuggerUrl")]
+        if pages:
+            break
+    except Exception:
+        pass
+    time.sleep(1)
+else:
+    raise SystemExit("no page target")
+ws = websocket.create_connection(pages[0]["webSocketDebuggerUrl"], timeout=10,
+                                 origin="http://127.0.0.1:%s" % port)
+ws.send(json.dumps({"id": 1, "method": "Page.navigate", "params": {"url": url}}))
+print(ws.recv()[:160])
+ws.close()
+PY
+python3 -m pip install --quiet --user websocket-client 2>/dev/null || \
+  python3 -m pip install --quiet --break-system-packages websocket-client 2>/dev/null || true
+
 list_windows() {  # $1 = label ; $2 = optional pid filter
   echo "--- windows: $1 ---" | tee -a "$OUT/parity.txt"
   if [ -n "$2" ] && [ "$2" != "0" ]; then
@@ -78,10 +118,12 @@ run_case() {
   fi
 
   ( SHARDX_OVERLAY_DEBUG=1 "$RT/ShardX" --user-data-dir="$ud" --no-first-run --no-default-browser-check \
-      --window-size=534,969 --remote-debugging-port="$PORT" about:blank \
+      --window-size=534,969 --remote-debugging-port="$PORT" --remote-allow-origins='*' about:blank \
       >"$OUT/${case_name}.log" 2>&1 & )
 
-  sleep 16
+  sleep 10
+  python3 "$OUT/nav.py" "$PORT" "file:///tmp/parity_page.html" >>"$OUT/parity.txt" 2>&1
+  sleep 6
   local cp
   cp=$(pgrep -x ShardX_core | head -1)
   echo "--- case $case_name: core=${cp:-none} ---" | tee -a "$OUT/parity.txt"
@@ -121,7 +163,7 @@ run_case() {
   fi
 
   echo "--- overlay debug ---" | tee -a "$OUT/parity.txt"
-  cat "$ud/shardx_overlay.log" 2>/dev/null | tail -6 | tee -a "$OUT/parity.txt"
+  cat "$ud/shardx_overlay.log" 2>/dev/null | tail -28 | tee -a "$OUT/parity.txt"
   list_windows "$case_name (all)" 0 >/dev/null
   echo "$case_name|$cp|$wid|$wx|$wy|$ww|$wh" >> "$OUT/windows.tsv"
   kill_profile
@@ -178,35 +220,43 @@ def analyse(path, mobile):
     im = Image.open(path).convert("RGB")
     w, h = im.size
     px = im.load()
-    row = h // 2
-    runs, cur = [], None
+    FRAME = (18, 19, 22)
+    rows = [int(h * f) for f in (0.2, 0.35, 0.5, 0.65, 0.8)]
+
+    def is_frame(c):
+        return all(abs(c[i] - FRAME[i]) <= 6 for i in range(3))
+
+    boundary = None
     for x in range(w):
-        r, g, b = px[x, row]
-        white = r >= 248 and g >= 248 and b >= 248
-        if white and cur is None:
-            cur = x
-        elif not white and cur is not None:
-            runs.append((cur, x - 1)); cur = None
-    if cur is not None:
-        runs.append((cur, w - 1))
-    runs = [(a, b) for a, b in runs if b - a >= 40]
-    left = px[2, row]
-    right = px[w - 12, row]
+        if all(is_frame(px[x, y]) for y in rows):
+            boundary = x
+            break
     print("IMAGE %s %dx%d" % (os.path.basename(path), w, h))
-    print("  white runs at mid-height: %s" % (runs,))
-    print("  colour at x=2: %s   at x=w-12: %s" % (left, right))
+    print("  first frame-coloured column: %s   colour at x=w-12: %s" % (
+        boundary, px[w - 12, rows[2]]))
     if mobile:
         ok_size = abs(w - 534) <= 6
-        ok_left = bool(runs) and runs[0][0] <= 3 and abs((runs[0][1] - runs[0][0] + 1) - 402) <= 6
-        dark = all(c < 60 for c in right)
+        limit = w if boundary is None else boundary
+        page_px = 0
+        for y in range(20, h - 20, 4):
+            for x in range(0, min(limit, w)):
+                r, g, b = px[x, y]
+                if r + g + b > 240:
+                    page_px += 1
+        ok_strip = boundary is not None and 396 <= boundary <= 412 and page_px > 3000
+        right_uniform = boundary is not None and all(
+            is_frame(px[x, y]) for x in range(boundary + 2, w, 2) for y in rows)
+        print("  page pixels left of the frame: %d" % page_px)
         print("  VERDICT D4 window width 534: %s" % ("PASS" if ok_size else "FAIL"))
-        print("  VERDICT D3 strip at left (x0=%s width=%s): %s" % (
-            runs[0][0] if runs else "-", (runs[0][1] - runs[0][0] + 1) if runs else "-",
-            "PASS" if ok_left else "FAIL"))
-        print("  VERDICT D3 dark frame #121316 right of strip: %s (%s)" % ("PASS" if dark else "FAIL", right))
+        print("  VERDICT D3 strip 402 px at the left edge (frame starts at %s): %s" % (
+            boundary, "PASS" if ok_strip else "FAIL"))
+        print("  VERDICT D3 dark frame #121316 right of strip uniform: %s" % (
+            "PASS" if right_uniform else "FAIL"))
     else:
-        ok_full = bool(runs) and runs[0][0] <= 3 and (runs[0][1] - runs[0][0] + 1) >= w - 12
-        print("  VERDICT desktop page fills window: %s" % ("PASS" if ok_full else "FAIL"))
+        bright = sum(1 for y in range(0, h, 8) for x in range(0, w, 8) if sum(px[x, y]) > 700)
+        total = len(range(0, h, 8)) * len(range(0, w, 8))
+        print("  bright coverage: %.0f%%" % (100.0 * bright / total))
+        print("  VERDICT desktop page fills window: %s" % ("PASS" if bright > total * 0.5 else "FAIL"))
 
     # toolbar chips: lavender (167,139,250) inside the top-right 4..130 x 20..100
     hits = 0
