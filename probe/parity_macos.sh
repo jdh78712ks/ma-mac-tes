@@ -86,7 +86,13 @@ kill_profile() {
 # --- one scenario: launch + measure ---------------------------------------
 run_case() {
   local case_name=$1 with_fp=$2 extra=${3:-}
-  local ud="/tmp/par_${case_name}"
+  # The wrapper derives its data root as <udd>/../.. and spawns the HUD from
+  # <data root>/runtime, so the probe has to mirror the real layout
+  # (MA DATA/user-data/<uuid>) instead of a bare /tmp dir.
+  local data="$OUT/data"
+  mkdir -p "$data/user-data"
+  [ -e "$data/runtime" ] || ln -s "/Applications/M&A Antidetect/MA DATA/runtime" "$data/runtime"
+  local ud="$data/user-data/$case_name"
   rm -rf "$ud"; mkdir -p "$ud"
   kill_profile
 
@@ -150,6 +156,13 @@ PY
   cat "$ud/shardx_overlay.log" 2>/dev/null | tail -400 | tee -a "$OUT/parity.txt"
   list_windows "$case_name (all)" 0 >/dev/null
   echo "$case_name|$cp|$wid|$wx|$wy|$ww|$wh" >> "$OUT/windows.tsv"
+  echo "--- hud processes ---" | tee -a "$OUT/parity.txt"
+  ps -Ao pid,command | grep -i "bookmark_hud" | grep -v grep | head -3 | tee -a "$OUT/parity.txt"
+  echo "--- hud windows ---" | tee -a "$OUT/parity.txt"
+  "$OUT/wl" 2>/dev/null | grep -i "hud" | tee -a "$OUT/parity.txt"
+  for f in "$ud/hud.log" "$data/hud.log" "$data/bookmark_hud.log" "$RT/ShardX.log"; do
+    if [ -f "$f" ]; then echo "--- log: $f" | tee -a "$OUT/parity.txt"; tail -12 "$f" | tee -a "$OUT/parity.txt"; fi
+  done
   kill_profile
 }
 
