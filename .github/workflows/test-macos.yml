@@ -100,16 +100,16 @@ jobs:
             DID="$(sed -n 's/^Persistent screen id: //p' /tmp/dp_list.txt | head -n1)"
             echo "displayplacer id=$DID"
             if [ -n "$DID" ]; then
-              for MODE in "res:1920x1080 hz:60 color_depth:8 scaling:off" "res:1920x1080 hz:60 color_depth:8 scaling:on" "res:1600x900 hz:60 color_depth:8 scaling:off"; do
-                echo "displayplacer -> $MODE"
-                "$DP" "id:$DID $MODE origin:(0,0) degree:0" || true
-                sleep 2
-                screencapture -x /tmp/res_probe.png 2>/dev/null
-                RW=$(sips -g pixelWidth /tmp/res_probe.png 2>/dev/null | awk '/pixelWidth/{print $2}')
-                RH=$(sips -g pixelHeight /tmp/res_probe.png 2>/dev/null | awk '/pixelHeight/{print $2}')
-                echo "проверка кадра после $MODE: ${RW}x${RH}"
-                [ "$RW" = "1920" ] && break
-              done
+              N1920=$("$DP" list | sed -n 's/.*mode \([0-9][0-9]*\): res:1920x1080 .*//p' | head -1)
+              echo "1920x1080 mode index=$N1920"
+              if [ -n "$N1920" ]; then
+                "$DP" "id:$DID mode:$N1920 origin:(0,0) degree:0" || true
+                sleep 3
+              fi
+              screencapture -x /tmp/res_probe.png 2>/dev/null
+              RW=$(sips -g pixelWidth /tmp/res_probe.png 2>/dev/null | awk '/pixelWidth/{print $2}')
+              RH=$(sips -g pixelHeight /tmp/res_probe.png 2>/dev/null | awk '/pixelHeight/{print $2}')
+              echo "проверка кадра: ${RW}x${RH}"
             fi
           else
             echo "displayplacer установить не удалось:"
