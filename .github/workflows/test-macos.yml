@@ -132,7 +132,7 @@ jobs:
           sw_vers
           sysctl -n machdep.cpu.brand_string
 
-      - name: 2. Скачивание и установка M&A-Setup-macOS.zip
+      - name: 2. Скачивание и установка M.A-Setup-macOS.zip
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ZIP_URL: ${{ inputs.zip_url }}
@@ -145,14 +145,14 @@ jobs:
             echo "Скачивание по прямой ссылке..."
             curl -L --fail -o "/tmp/ma_installer/setup.zip" "$ZIP_URL"
           else
-            echo "Скачивание zip архива из Releases репозитория ${GITHUB_REPOSITORY}..."
-            gh release download --repo "$GITHUB_REPOSITORY" --pattern "*.zip" --dir "/tmp/ma_installer" --clobber || \
-            curl -L --fail -o "/tmp/ma_installer/setup.zip" "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/M%26A-Setup-macOS.zip" || \
+            echo "Скачивание канонического архива из Releases ${GITHUB_REPOSITORY}..."
+            gh release download --repo "$GITHUB_REPOSITORY" --pattern "M.A-Setup-macOS.zip" --dir "/tmp/ma_installer" --clobber || \
             curl -L --fail -o "/tmp/ma_installer/setup.zip" "https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/M.A-Setup-macOS.zip"
           fi
 
-          # Находим скачанный zip архив
-          ZIP_FOUND=$(find /tmp/ma_installer -maxdepth 1 -name "*.zip" | head -n 1)
+          # Никогда не выбираем случайный zip: в релизе могут лежать старые
+          # тестовые сборки.  Только явный архив (setup.zip или канонический).
+          ZIP_FOUND=$(find /tmp/ma_installer -maxdepth 1 \( -name "setup.zip" -o -name "M.A-Setup-macOS.zip" \) | head -n 1)
           if [ -n "$ZIP_FOUND" ] && [ -f "$ZIP_FOUND" ]; then
             echo "Найден архив: $ZIP_FOUND ($(ls -lh "$ZIP_FOUND" | awk '{print $5}'))"
             echo "Распаковка через ditto..."
@@ -207,7 +207,7 @@ jobs:
             fi
           else
             echo "ОШИБКА: Архив с дистрибутивом не найден в Releases!"
-            echo "Пожалуйста, загрузите M&A-Setup-macOS.zip в раздел Releases репозитория."
+            echo "Пожалуйста, загрузите M.A-Setup-macOS.zip в раздел Releases репозитория."
             exit 1
           fi
           exit 0
