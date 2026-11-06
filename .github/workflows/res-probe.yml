@@ -1,0 +1,46 @@
+name: display probe
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: probe
+        run: |
+          set +e
+          echo "=== ${{ matrix.os }} model=$(sysctl -n hw.model) arch=$(uname -m) ==="
+          sw_vers
+          cat > /tmp/m.swift <<'SW'
+          import CoreGraphics
+          import Foundation
+          let d = CGMainDisplayID()
+          let b = CGDisplayBounds(d)
+          print("bounds \(Int(b.width))x\(Int(b.height)) px=\(CGDisplayPixelsWide(d))x\(CGDisplayPixelsHigh(d))")
+          SW
+          swiftc -O /tmp/m.swift -o /tmp/m 2>/dev/null && /tmp/m
+          screencapture -x /tmp/a.png 2>/dev/null; echo "shot_before: $(sips -g pixelWidth -g pixelHeight /tmp/a.png 2>/dev/null | tr '
+' ' ')"
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ANALYTICS=1
+          brew install displayplacer >/tmp/br.log 2>&1; echo "brew_exit=$?"; tail -3 /tmp/br.log
+          DP=$(command -v displayplacer || echo /opt/homebrew/bin/displayplacer)
+          echo "dp=$DP"; "$DP" list 2>&1 | head -25
+          ID=$("$DP" list 2>/dev/null | sed -n 's/^Persistent screen id: //p' | head -1)
+          echo "id=$ID"
+          "$DP" "id:$ID res:1920x1080 hz:60 color_depth:8 scaling:off origin:(0,0) degree:0" 2>&1
+          sleep 3
+          screencapture -x /tmp/c.png 2>/dev/null; echo "shot_dp: $(sips -g pixelWidth -g pixelHeight /tmp/c.png 2>/dev/null | tr '
+' ' ')"
+          echo "=== change_res ==="
+          ls -l "/Library/Application Support/Veertu/Anka/addons/change_res" 2>&1
+          "/Library/Application Support/Veertu/Anka/addons/change_res" 1920x1080x32@60 2>&1
+          sleep 2
+          screencapture -x /tmp/d.png 2>/dev/null; echo "shot_after: $(sips -g pixelWidth -g pixelHeight /tmp/d.png 2>/dev/null | tr '
+' ' ')"
+          echo "gui_session: $(launchctl print gui/$(id -u) 2>/dev/null | head -2 | tr '
+' ' ')"
+          echo "=== end ==="
