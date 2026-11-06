@@ -88,8 +88,40 @@ jobs:
           swiftc -O /tmp/ma_setmode.swift -o /tmp/ma_setmode 2>/dev/null && /tmp/ma_setmode
           sleep 3
 
+          echo "=== displayplacer: принудительно 1920x1080 ==="
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ANALYTICS=1
+          if ! command -v displayplacer >/dev/null 2>&1; then
+            brew install displayplacer >/tmp/dp_brew.log 2>&1 || true
+          fi
+          DP="$(command -v displayplacer || true)"
+          [ -n "$DP" ] || DP=/opt/homebrew/bin/displayplacer
+          if [ -x "$DP" ]; then
+            "$DP" list | tee /tmp/dp_list.txt
+            DID="$(sed -n 's/^Persistent screen id: //p' /tmp/dp_list.txt | head -n1)"
+            echo "displayplacer id=$DID"
+            if [ -n "$DID" ]; then
+              for MODE in "res:1920x1080 hz:60 color_depth:8 scaling:off" "res:1920x1080 hz:60 color_depth:8 scaling:on" "res:1600x900 hz:60 color_depth:8 scaling:off"; do
+                echo "displayplacer -> $MODE"
+                "$DP" "id:$DID $MODE origin:(0,0) degree:0" || true
+                sleep 2
+                screencapture -x /tmp/res_probe.png 2>/dev/null
+                RW=$(sips -g pixelWidth /tmp/res_probe.png 2>/dev/null | awk '/pixelWidth/{print $2}')
+                RH=$(sips -g pixelHeight /tmp/res_probe.png 2>/dev/null | awk '/pixelHeight/{print $2}')
+                echo "проверка кадра после $MODE: ${RW}x${RH}"
+                [ "$RW" = "1920" ] && break
+              done
+            fi
+          else
+            echo "displayplacer установить не удалось:"
+            tail -20 /tmp/dp_brew.log 2>/dev/null
+          fi
+
+
           echo "=== После ==="
           /tmp/ma_modes | head -3
+          screencapture -x /tmp/ma_after_res.png 2>/dev/null
+          sips -g pixelWidth -g pixelHeight /tmp/ma_after_res.png 2>/dev/null
+          killall Dock 2>/dev/null || true
           osascript -e 'tell application "Finder" to get bounds of window of desktop' 2>/dev/null || true
 
       - name: 1. Настройка пароля macOS и проверка архитектуры (Apple Silicon ARM64)
