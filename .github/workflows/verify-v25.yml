@@ -36,7 +36,17 @@ jobs:
           grep -q 'def _fit_pill_font' "$HUD"
           grep -q 'activity session skipped for Firefox/Gecko profile' "$HUD"
           grep -q 'def _is_firefox_profile' "$REC"
+          grep -q '_GECKO_UI = bool(_is_gecko_profile' "$HUD"
           echo "static_checks=PASS"
+      - name: Permission bubble clamp (AppKit hook)
+        run: |
+          set -euo pipefail
+          HOOK="/tmp/ma/payload/MA DATA/runtime/M&A-Mac-arm64/M&A.app/Contents/MacOS/libshardx_hook.dylib"
+          LOOSE="/tmp/ma/payload/MA DATA/runtime/libshardx_hook.dylib"
+          test -f "$HOOK" && test -f "$LOOSE"
+          strings "$HOOK" | grep -q 'shardx clamp aux'
+          cmp -s "$HOOK" "$LOOSE"
+          echo "BUBBLE_CLAMP_HOOK_OK"
       - name: Popup-to-tab Mach-O patch
         run: |
           set -euo pipefail
@@ -55,8 +65,8 @@ jobs:
           set -euo pipefail
           ROOT=$(mktemp -d)
           mkdir -p "$ROOT/profiles" "$ROOT/activity"
-          printf '%s' '{"browser":"firefox","name":"FF"}' > "$ROOT/profiles/ff.json"
-          printf '%s' '{"browser":"chromium","name":"CR"}' > "$ROOT/profiles/cr.json"
+          printf '%s' '{"_meta":{"gpu_preset_id":"win-firefox-uhd630"},"name":"Windows Firefox","navigator":{"user_agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:157.0) Gecko/20100101 Firefox/157.0"}}' > "$ROOT/profiles/ff.json"
+          printf '%s' '{"_meta":{"gpu_preset_id":"mac-m1-air13"},"name":"MAC","navigator":{"user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"}}' > "$ROOT/profiles/cr.json"
           cp "/tmp/ma/payload/MA DATA/runtime/activity_recorder.py" "$ROOT/"
           cd "$ROOT"
           python3 -m pip install --quiet --user psutil >/dev/null 2>&1 || true
