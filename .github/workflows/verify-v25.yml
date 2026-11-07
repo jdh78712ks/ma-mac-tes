@@ -16,21 +16,23 @@ jobs:
           curl -L --fail --retry 3 -o /tmp/ma.zip "${{ inputs.zip_url }}"
           mkdir -p /tmp/ma
           ditto -x -k /tmp/ma.zip /tmp/ma
+          ditto -x -k "/tmp/ma/M&A-Setup.app/Contents/Resources/payload.zip" /tmp/ma/payload
+          ls -la /tmp/ma/payload | head
       - name: Version and static checks
         run: |
           set -euo pipefail
-          PLIST="/tmp/ma/M&A Launcher.app/Contents/Info.plist"
+          PLIST="/tmp/ma/payload/M&A Launcher.app/Contents/Info.plist"
           V=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")
           echo "launcher_version=$V"
           test "$V" = "2.5"
-          JS=$(find "/tmp/ma/M&A Launcher.app" -name 'index-*.js' | head -1)
+          JS=$(find "/tmp/ma/payload/M&A Launcher.app" -name 'index-*.js' | head -1)
           echo "bundle=$JS"
           grep -q 'v 2.5' "$JS"
           grep -q 'v+2.5' "$JS"
           grep -q 'app_version:"v 2.5"' "$JS"
           grep -q 'return"2.5"' "$JS"
-          HUD="/tmp/ma/MA DATA/runtime/bookmark_hud.py"
-          REC="/tmp/ma/MA DATA/runtime/activity_recorder.py"
+          HUD="/tmp/ma/payload/MA DATA/runtime/bookmark_hud.py"
+          REC="/tmp/ma/payload/MA DATA/runtime/activity_recorder.py"
           test -f "$HUD" && test -f "$REC"
           grep -q 'def _is_gecko_profile' "$HUD"
           grep -q 'def _fit_pill_font' "$HUD"
@@ -44,7 +46,7 @@ jobs:
           mkdir -p "$ROOT/profiles" "$ROOT/activity"
           printf '%s' '{"browser":"firefox","name":"FF"}' > "$ROOT/profiles/ff.json"
           printf '%s' '{"browser":"chromium","name":"CR"}' > "$ROOT/profiles/cr.json"
-          cp "/tmp/ma/MA DATA/runtime/activity_recorder.py" "$ROOT/"
+          cp "/tmp/ma/payload/MA DATA/runtime/activity_recorder.py" "$ROOT/"
           cd "$ROOT"
           python3 -m pip install --quiet --user psutil >/dev/null 2>&1 || true
           python3 - <<'PY'
