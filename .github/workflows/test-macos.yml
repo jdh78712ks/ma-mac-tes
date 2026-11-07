@@ -599,22 +599,94 @@ jobs:
               }
           }
 
-          static void type_utf8(const char* s) {
-              while (*s) {
-                  unsigned char c = (unsigned char)*s++;
-                  UniChar u = (UniChar)c;
-                  CGEventRef dn = CGEventCreateKeyboardEvent(NULL, 0, true);
-                  CGEventRef up = CGEventCreateKeyboardEvent(NULL, 0, false);
-                  if (dn && up) {
-                      CGEventKeyboardSetUnicodeString(dn, 1, &u);
-                      CGEventKeyboardSetUnicodeString(up, 1, &u);
-                      CGEventPost(kCGHIDEventTap, dn);
-                      usleep(8000);
-                      CGEventPost(kCGHIDEventTap, up);
-                      usleep(8000);
-                  }
+          static void post_key_event(int kc, int down, CGEventFlags flags) {
+              CGEventRef ev = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kc, down);
+              if (!ev) return;
+              CGEventSetFlags(ev, flags);
+              CGEventPost(kCGHIDEventTap, ev);
+              CFRelease(ev);
+          }
+
+          static void press_key(int kc, int hold_ms) {
+              post_key_event(kc, 1, 0);
+              usleep(hold_ms * 1000);
+              post_key_event(kc, 0, 0);
+              usleep(15000);
+          }
+
+          static void release_modifiers(void) {
+              // Command/Shift/Option/Control key-ups clear a modifier that an
+              // earlier synthetic shortcut left flagged (Cmd+Enter -> new tab).
+              post_key_event(55, 0, 0); // Command
+              post_key_event(56, 0, 0); // Shift
+              post_key_event(58, 0, 0); // Option
+              post_key_event(59, 0, 0); // Control
+              usleep(15000);
+          }
+
+          static void cmd_shortcut(int kc) {
+              // Flags on the letter alone leave Command logically held down.
+              // A real Command key down/up pair makes the next Enter a plain Enter.
+              post_key_event(55, 1, kCGEventFlagMaskCommand);
+              usleep(20000);
+              post_key_event(kc, 1, kCGEventFlagMaskCommand);
+              usleep(25000);
+              post_key_event(kc, 0, kCGEventFlagMaskCommand);
+              usleep(15000);
+              post_key_event(55, 0, 0);
+              usleep(20000);
+          }
+
+          static void post_unicode_codepoint(unsigned int cp) {
+              UniChar buf[2];
+              int n = 0;
+              if (cp <= 0xFFFF) {
+                  buf[n++] = (UniChar)cp;
+              } else if (cp <= 0x10FFFF) {
+                  unsigned int v = cp - 0x10000;
+                  buf[n++] = (UniChar)(0xD800 + (v >> 10));
+                  buf[n++] = (UniChar)(0xDC00 + (v & 0x3FF));
+              } else {
+                  return;
+              }
+              CGEventRef dn = CGEventCreateKeyboardEvent(NULL, 0, true);
+              CGEventRef up = CGEventCreateKeyboardEvent(NULL, 0, false);
+              if (!dn || !up) {
                   if (dn) CFRelease(dn);
                   if (up) CFRelease(up);
+                  return;
+              }
+              CGEventSetFlags(dn, 0);
+              CGEventSetFlags(up, 0);
+              CGEventKeyboardSetUnicodeString(dn, n, buf);
+              CGEventKeyboardSetUnicodeString(up, n, buf);
+              CGEventPost(kCGHIDEventTap, dn);
+              usleep(6000);
+              CGEventPost(kCGHIDEventTap, up);
+              usleep(6000);
+              CFRelease(dn);
+              CFRelease(up);
+          }
+
+          static void type_utf8(const char* s) {
+              const unsigned char* p = (const unsigned char*)s;
+              while (*p) {
+                  unsigned int cp = *p;
+                  int len = 1;
+                  if (*p >= 0x80) {
+                      if ((*p & 0xE0) == 0xC0 && p[1]) {
+                          cp = ((unsigned int)(p[0] & 0x1F) << 6) | (p[1] & 0x3F);
+                          len = 2;
+                      } else if ((*p & 0xF0) == 0xE0 && p[1] && p[2]) {
+                          cp = ((unsigned int)(p[0] & 0x0F) << 12) | ((unsigned int)(p[1] & 0x3F) << 6) | (p[2] & 0x3F);
+                          len = 3;
+                      } else if ((*p & 0xF8) == 0xF0 && p[1] && p[2] && p[3]) {
+                          cp = ((unsigned int)(p[0] & 0x07) << 18) | ((unsigned int)(p[1] & 0x3F) << 12) | ((unsigned int)(p[2] & 0x3F) << 6) | (p[3] & 0x3F);
+                          len = 4;
+                      }
+                  }
+                  post_unicode_codepoint(cp);
+                  p += len;
               }
           }
 
@@ -676,25 +748,11 @@ jobs:
                   CGEventRef sev = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitLine, 1, dy);
                   if (sev) { CGEventPost(kCGHIDEventTap, sev); CFRelease(sev); }
               } else if (strcmp(cmd, "key") == 0 && argc >= 3) {
-                  int kc = atoi(argv[2]);
-                  CGEventRef dn = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kc, true);
-                  CGEventRef up = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kc, false);
-                  if (dn) { CGEventPost(kCGHIDEventTap, dn); CFRelease(dn); }
-                  usleep(15000);
-                  if (up) { CGEventPost(kCGHIDEventTap, up); CFRelease(up); }
+                  press_key(atoi(argv[2]), 15);
               } else if (strcmp(cmd, "cmdkey") == 0 && argc >= 3) {
-                  int kc = atoi(argv[2]);
-                  CGEventRef dn = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kc, true);
-                  CGEventRef up = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)kc, false);
-                  if (dn && up) {
-                      CGEventSetFlags(dn, kCGEventFlagMaskCommand);
-                      CGEventSetFlags(up, kCGEventFlagMaskCommand);
-                      CGEventPost(kCGHIDEventTap, dn);
-                      usleep(20000);
-                      CGEventPost(kCGHIDEventTap, up);
-                  }
-                  if (dn) CFRelease(dn);
-                  if (up) CFRelease(up);
+                  cmd_shortcut(atoi(argv[2]));
+              } else if (strcmp(cmd, "release") == 0) {
+                  release_modifiers();
               } else if (strcmp(cmd, "text") == 0 && argc >= 3) {
                   type_utf8(argv[2]);
               }
@@ -761,13 +819,17 @@ jobs:
             <b> Mac M1</b>
             <button class="btn primary" onclick="directPasteFromClipboard()" title="Вставить прямо из буфера обмена вашего ПК (Ctrl+V)">📋 Вставить буфер (Ctrl+V)</button>
             <button class="btn cyan" onclick="copyFromRemoteMac()" title="Скопировать выделенное на Mac в буфер вашего ПК (Ctrl+C)">📋 Забрать с Mac (Ctrl+C)</button>
-            <input id="txt" type="text" placeholder="Текст / Токен..." />
-            <button class="btn" onclick="sendText()">Ввод</button>
+            <input id="txt" type="text" placeholder="URL / текст..." autocomplete="off" spellcheck="false" />
+            <button class="btn" onclick="sendText(false)">Ввод</button>
+            <button class="btn primary" onclick="sendText(true)">Ввод ↵</button>
+            <button class="btn accent" onclick="sendUrl()">🌐 Открыть URL</button>
             <button class="btn" onclick="sendKey(36)">Enter ↵</button>
             <button class="btn" onclick="sendKey(51)">⌫</button>
             <button class="btn" onclick="sendKey(48)">Tab ⇥</button>
             <button class="btn" onclick="sendKey(53)">Esc</button>
             <button class="btn" onclick="sendCmdKey(0)">Cmd+A</button>
+            <button class="btn" onclick="sendCmdKey(37)">⌘L (адрес)</button>
+            <button class="btn" onclick="releaseKeys()">Сброс клавиш</button>
             <button class="btn" onclick="runApp('launcher')">🚀 M&A Launcher</button>
             <button class="btn" onclick="runApp('safari')">🌐 Safari</button>
             <button class="btn" onclick="runApp('terminal')">💻 Terminal</button>
@@ -790,6 +852,8 @@ jobs:
           let toastTimer = null;
           let lastPasteTs = 0;
           let dragStart = null;
+          let textBuf = '';
+          let textTimer = null;
 
           function showToast(msg) {
             toastEl.textContent = msg;
@@ -922,17 +986,69 @@ jobs:
             fetch('/api?cmd=cmdkey&kc=8').then(function() {
               setTimeout(function() {
                 fetchRemoteClipboard(true);
-              }, 200);
+              }, 350);
             });
           }
 
-          function sendText() {
+          function sendText(withEnter) {
             const el = document.getElementById('txt');
-            const v = el.value;
-            if (!v) return;
-            fetch('/api?cmd=text&val=' + encodeURIComponent(v));
-            st.textContent = 'Ввод: ' + v.slice(0, 15) + '...';
+            const v = (el.value || '').trim();
+            if (!v) { showToast('Введите текст'); el.focus(); return; }
+            fetch('/api/paste', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: v, enter: !!withEnter, focus_address: false })
+            }).then(function(res) {
+              if (!res.ok) throw new Error('HTTP ' + res.status);
+              showToast((withEnter ? 'Введено + Enter: ' : 'Введено: ') + v.slice(0, 25));
+              st.textContent = 'Ввод: ' + v.slice(0, 15);
+            }).catch(function(err) {
+              showToast('❌ Ошибка ввода: ' + err);
+            });
             el.value = '';
+            el.focus();
+          }
+
+          function sendUrl() {
+            const el = document.getElementById('txt');
+            const v = (el.value || '').trim();
+            if (!v) { showToast('Введите URL'); el.focus(); return; }
+            fetch('/api/paste', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: v, enter: true, focus_address: true })
+            }).then(function(res) {
+              if (!res.ok) throw new Error('HTTP ' + res.status);
+              showToast('🌐 Открываю: ' + v.slice(0, 25));
+              st.textContent = 'URL: ' + v.slice(0, 30);
+            }).catch(function(err) {
+              showToast('❌ Ошибка URL: ' + err);
+            });
+            el.value = '';
+            el.focus();
+          }
+
+          function releaseKeys() {
+            fetch('/api?cmd=release').then(function() {
+              showToast('Модификаторы сброшены');
+            }).catch(function(err) {
+              showToast('❌ Ошибка сброса: ' + err);
+            });
+          }
+
+          function flushText() {
+            if (!textBuf) return;
+            const v = textBuf;
+            textBuf = '';
+            clearTimeout(textTimer);
+            textTimer = null;
+            fetch('/api?cmd=text&val=' + encodeURIComponent(v));
+          }
+
+          function queueText(ch) {
+            textBuf += ch;
+            clearTimeout(textTimer);
+            textTimer = setTimeout(flushText, 40);
           }
 
           function sendKey(kc) {
@@ -953,7 +1069,8 @@ jobs:
           document.getElementById('txt').addEventListener('keydown', function(e) {
             if (e.key === 'Enter') {
               e.preventDefault();
-              sendText();
+              e.stopPropagation();
+              sendText(true);
             }
           });
 
@@ -1011,6 +1128,7 @@ jobs:
               return;
             }
 
+            if (e.key === 'Enter' || e.key === 'Backspace' || e.key === 'Tab' || e.key === 'Escape' || e.key.indexOf('Arrow') === 0) flushText();
             if (e.key === 'Enter') { e.preventDefault(); sendKey(36); }
             else if (e.key === 'Backspace') { e.preventDefault(); sendKey(51); }
             else if (e.key === 'Tab') { e.preventDefault(); sendKey(48); }
@@ -1020,7 +1138,7 @@ jobs:
             else if (e.key === 'ArrowLeft') { e.preventDefault(); sendKey(123); }
             else if (e.key === 'ArrowRight') { e.preventDefault(); sendKey(124); }
             else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-              fetch('/api?cmd=text&val=' + encodeURIComponent(e.key));
+              queueText(e.key);
             }
           });
           </script>
@@ -1044,19 +1162,31 @@ jobs:
                   if u.path in ("/api/paste", "/api"):
                       length = int(self.headers.get('Content-Length', 0))
                       body = self.rfile.read(length).decode('utf-8', errors='replace')
-                      text = body
+                      j = {}
                       try:
                           j = json.loads(body)
-                          if isinstance(j, dict) and 'text' in j:
-                              text = j['text']
                       except Exception:
-                          pass
+                          j = {}
+                      if isinstance(j, dict) and 'text' in j:
+                          text = str(j.get('text') or '')
+                          focus_address = bool(j.get('focus_address'))
+                          press_enter = bool(j.get('enter'))
+                      else:
+                          text = body
+                          focus_address = False
+                          press_enter = False
                       if text:
                           try:
                               p = subprocess.Popen(["/usr/bin/pbcopy"], stdin=subprocess.PIPE)
                               p.communicate(text.encode("utf-8"))
-                              time.sleep(0.02)
-                              subprocess.Popen(["/tmp/mac_fast", "cmdkey", "9"])
+                              time.sleep(0.10)
+                              if focus_address:
+                                  subprocess.run(["/tmp/mac_fast", "cmdkey", "37"], timeout=5)
+                                  time.sleep(0.30)
+                              subprocess.run(["/tmp/mac_fast", "cmdkey", "9"], timeout=5)
+                              time.sleep(0.30)
+                              if press_enter:
+                                  subprocess.run(["/tmp/mac_fast", "key", "36"], timeout=5)
                           except Exception:
                               pass
                       self.send_response(200)
@@ -1146,6 +1276,8 @@ jobs:
                           subprocess.Popen(["/tmp/mac_fast", "key", q.get("kc", ["36"])[0]])
                       elif cmd == "cmdkey":
                           subprocess.Popen(["/tmp/mac_fast", "cmdkey", q.get("kc", ["0"])[0]])
+                      elif cmd == "release":
+                          subprocess.Popen(["/tmp/mac_fast", "release"])
                       elif cmd == "text":
                           val = q.get("val", [""])[0]
                           if val: subprocess.Popen(["/tmp/mac_fast", "text", val])
