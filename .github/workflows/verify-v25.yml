@@ -1,0 +1,62 @@
+name: Verify v25 artifact
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: macOS v2.5 zip URL
+        required: true
+        type: string
+jobs:
+  verify:
+    runs-on: macos-15
+    steps:
+      - name: Download and extract
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 -o /tmp/ma.zip "${{ inputs.zip_url }}"
+          mkdir -p /tmp/ma
+          ditto -x -k /tmp/ma.zip /tmp/ma
+      - name: Version and static checks
+        run: |
+          set -euo pipefail
+          PLIST="/tmp/ma/M&A Launcher.app/Contents/Info.plist"
+          V=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")
+          echo "launcher_version=$V"
+          test "$V" = "2.5"
+          JS=$(find "/tmp/ma/M&A Launcher.app" -name 'index-*.js' | head -1)
+          echo "bundle=$JS"
+          grep -q 'v 2.5' "$JS"
+          grep -q 'v+2.5' "$JS"
+          grep -q 'app_version:"v 2.5"' "$JS"
+          grep -q 'return"2.5"' "$JS"
+          HUD="/tmp/ma/MA DATA/runtime/bookmark_hud.py"
+          REC="/tmp/ma/MA DATA/runtime/activity_recorder.py"
+          test -f "$HUD" && test -f "$REC"
+          grep -q 'def _is_gecko_profile' "$HUD"
+          grep -q 'def _fit_pill_font' "$HUD"
+          grep -q 'activity session skipped for Firefox/Gecko profile' "$HUD"
+          grep -q 'def _is_firefox_profile' "$REC"
+          echo "static_checks=PASS"
+      - name: Firefox filter runtime test
+        run: |
+          set -euo pipefail
+          ROOT=$(mktemp -d)
+          mkdir -p "$ROOT/profiles" "$ROOT/activity"
+          printf '%s' '{"browser":"firefox","name":"FF"}' > "$ROOT/profiles/ff.json"
+          printf '%s' '{"browser":"chromium","name":"CR"}' > "$ROOT/profiles/cr.json"
+          cp "/tmp/ma/MA DATA/runtime/activity_recorder.py" "$ROOT/"
+          cd "$ROOT"
+          python3 -m pip install --quiet --user psutil >/dev/null 2>&1 || true
+          python3 - <<'PY'
+          import importlib.util, os
+          here = os.getcwd()
+          spec = importlib.util.spec_from_file_location("rec", os.path.join(here, "activity_recorder.py"))
+          rec = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(rec)
+          assert rec._is_firefox_profile(here, "ff") is True, "firefox not detected"
+          assert rec._is_firefox_profile(here, "cr") is False, "chromium misdetected"
+          assert rec.begin("ff", here) is None, "firefox session started"
+          print("FIREFOX_FILTER_OK")
+          PY
+      - name: Summary
+        run: echo "v2.5 artifact checks passed" >> "$GITHUB_STEP_SUMMARY"
