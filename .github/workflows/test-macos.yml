@@ -1070,7 +1070,7 @@ jobs:
             if (e.key === 'Enter') {
               e.preventDefault();
               e.stopPropagation();
-              sendText(true);
+              sendUrl();
             }
           });
 
