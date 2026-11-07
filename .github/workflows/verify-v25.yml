@@ -25,12 +25,13 @@ jobs:
           V=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")
           echo "launcher_version=$V"
           test "$V" = "2.5"
-          JS=$(find "/tmp/ma/payload/M&A Launcher.app" -name 'index-*.js' | head -1)
+          JS="/tmp/ma/payload/M&A Launcher.app/Contents/MacOS/shardx-launcher-core"
+          test -f "$JS"
           echo "bundle=$JS"
-          grep -q 'v 2.5' "$JS"
-          grep -q 'v+2.5' "$JS"
-          grep -q 'app_version:"v 2.5"' "$JS"
-          grep -q 'return"2.5"' "$JS"
+          grep -aq 'v 2.5' "$JS"
+          grep -aq 'v+2.5' "$JS"
+          grep -aq 'app_version:"v 2.5"' "$JS"
+          grep -aq 'return"2.5"' "$JS"
           HUD="/tmp/ma/payload/MA DATA/runtime/bookmark_hud.py"
           REC="/tmp/ma/payload/MA DATA/runtime/activity_recorder.py"
           test -f "$HUD" && test -f "$REC"
