@@ -538,7 +538,7 @@ jobs:
           KEEP_MINS: ${{ inputs.keep_alive_minutes }}
         run: |
           set +e
-          caffeinate -u -t 7200 >/dev/null 2>&1 &
+          caffeinate -u -t $((KEEP_MINS * 60)) >/dev/null 2>&1 &
 
           cat << 'EOF' > /tmp/mac_fast.c
           #include <ApplicationServices/ApplicationServices.h>
