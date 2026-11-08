@@ -51,6 +51,17 @@ jobs:
           test -f "$APP/Contents/_CodeSignature/CodeResources"
           codesign --verify --deep --strict --verbose=2 "$APP" > /tmp/ma-live/launcher-verify.txt 2>&1
           echo "launcher_codesign=PASS"
+          PY="/Applications/M&A Antidetect/MA DATA/runtime/python/bin/python3.11"
+          test -x "$PY"
+          codesign -dv --verbose=4 "$PY" > /tmp/ma-live/python-codesign.txt 2>&1 || true
+          codesign --verify --strict --verbose=4 "$PY" > /tmp/ma-live/python-verify.txt 2>&1 || true
+          cp "/Applications/M&A Antidetect/MA DATA/settings.json" /tmp/ma-live/settings.json 2>/dev/null || true
+          set +e
+          "$PY" -c 'import sys; print(sys.version); print("PY_RUN_OK")' > /tmp/ma-live/python-run.txt 2>&1
+          PY_STATUS=$?
+          set -e
+          echo "python_run_exit=$PY_STATUS" | tee /tmp/ma-live/python-status.txt
+          test "$PY_STATUS" -eq 0
 
       - name: Launch and capture AMFI diagnostics
         if: always()
@@ -97,5 +108,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ma-live-launch-diagnostics
-          path: /tmp/ma-live
+          path: |
+            /tmp/ma-live/*.txt
+            /tmp/ma-live/*.log
+            /tmp/ma-live/*.png
+            /tmp/ma-live/settings.json
           if-no-files-found: warn
