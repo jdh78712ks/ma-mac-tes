@@ -1,0 +1,166 @@
+name: Fix macOS signatures
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: "Direct URL of M&A-Setup-macOS-v2.6.zip"
+        required: true
+        type: string
+      release_tag:
+        description: "Release tag for the repaired asset"
+        required: true
+        default: "v2.6"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  resign:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Download and extract
+        env:
+          ZIP_URL: ${{ inputs.zip_url }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/ma-sign
+          mkdir -p /tmp/ma-sign/outer /tmp/ma-sign/payload
+          curl -L --fail --retry 5 --retry-delay 3 -o /tmp/ma-sign/source.zip "$ZIP_URL"
+          ditto -x -k /tmp/ma-sign/source.zip /tmp/ma-sign/outer
+          SETUP=$(find /tmp/ma-sign/outer -maxdepth 1 -name 'M&A-Setup.app' -print -quit)
+          test -n "$SETUP"
+          test -f "$SETUP/Contents/Resources/payload.zip"
+          echo "SETUP=$SETUP" >> "$GITHUB_ENV"
+          echo "PAYLOAD_ZIP=$SETUP/Contents/Resources/payload.zip" >> "$GITHUB_ENV"
+          ditto -x -k "$SETUP/Contents/Resources/payload.zip" /tmp/ma-sign/payload
+          ls -lh "$SETUP/Contents/Resources/payload.zip"
+
+      - name: Re-sign launcher app
+        run: |
+          set -euo pipefail
+          APP="/tmp/ma-sign/payload/M&A Launcher.app"
+          test -d "$APP"
+          xattr -cr "$APP"
+          codesign --remove-signature "$APP/Contents/MacOS/shardx-launcher" 2>/dev/null || true
+          codesign --remove-signature "$APP/Contents/MacOS/liblauncher_hook.dylib" 2>/dev/null || true
+          codesign --force --sign - "$APP/Contents/MacOS/liblauncher_hook.dylib"
+          codesign --force --sign - "$APP/Contents/MacOS/shardx-launcher"
+          codesign --force --sign - "$APP"
+          test -f "$APP/Contents/_CodeSignature/CodeResources"
+          codesign --verify --strict --verbose=2 "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv --verbose=4 "$APP" 2>&1 | tee /tmp/ma-sign/launcher-signature.txt
+
+      - name: Rebuild payload.zip
+        run: |
+          set -euo pipefail
+          rm -f /tmp/ma-sign/payload.zip
+          ditto -c -k --norsrc --noextattr --noqtn --noacl /tmp/ma-sign/payload /tmp/ma-sign/payload.zip
+          python3 - <<'PY'
+          import zipfile
+          p = "/tmp/ma-sign/payload.zip"
+          with zipfile.ZipFile(p) as z:
+              names = set(z.namelist())
+              required = {
+                  "M&A Launcher.app/Contents/Info.plist",
+                  "M&A Launcher.app/Contents/MacOS/shardx-launcher",
+                  "M&A Launcher.app/Contents/MacOS/shardx-launcher-core",
+                  "M&A Launcher.app/Contents/MacOS/liblauncher_hook.dylib",
+                  "M&A Launcher.app/Contents/_CodeSignature/CodeResources",
+                  "MA DATA/profiles",
+                  "MA DATA/user-data",
+              }
+              missing = required - names
+              assert not missing, "payload.zip missing: %r" % sorted(missing)
+          print("payload entries:", len(names))
+          PY
+          ls -lh /tmp/ma-sign/payload.zip
+
+      - name: Re-sign setup app
+        env:
+          SETUP: ${{ env.SETUP }}
+          PAYLOAD_ZIP: ${{ env.PAYLOAD_ZIP }}
+        run: |
+          set -euo pipefail
+          cp /tmp/ma-sign/payload.zip "$PAYLOAD_ZIP"
+          xattr -cr "$SETUP"
+          codesign --remove-signature "$SETUP/Contents/MacOS/M&A-Setup" 2>/dev/null || true
+          codesign --force --sign - "$SETUP"
+          test -f "$SETUP/Contents/_CodeSignature/CodeResources"
+          codesign --verify --strict --verbose=2 "$SETUP"
+          codesign --verify --deep --strict --verbose=2 "$SETUP"
+          codesign -dv --verbose=4 "$SETUP" 2>&1 | tee /tmp/ma-sign/setup-signature.txt
+
+      - name: Rebuild installer zip
+        run: |
+          set -euo pipefail
+          OUT="/tmp/ma-sign/M.A-Setup-macOS-v2.6-signed.zip"
+          rm -f "$OUT"
+          ditto -c -k --norsrc --noextattr --noqtn --noacl /tmp/ma-sign/outer "$OUT"
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          python3 - "$OUT" <<'PY'
+          import os
+          import stat
+          import sys
+          import zipfile
+          p = sys.argv[1]
+          with zipfile.ZipFile(p) as z:
+              names = set(z.namelist())
+              required = {
+                  "M&A-Setup.app/Contents/Info.plist",
+                  "M&A-Setup.app/Contents/MacOS/M&A-Setup",
+                  "M&A-Setup.app/Contents/Resources/payload.zip",
+                  "M&A-Setup.app/Contents/_CodeSignature/CodeResources",
+                  "Install M&A.command",
+                  "README_MACOS.txt",
+              }
+              missing = required - names
+              assert not missing, "installer zip missing: %r" % sorted(missing)
+              cmd = z.getinfo("Install M&A.command")
+              mode = (cmd.external_attr >> 16) & 0o777
+              assert mode & 0o111, "Install M&A.command is not executable: %o" % mode
+              assert z.read("M&A-Setup.app/Contents/Resources/payload.zip") == open("/tmp/ma-sign/payload.zip", "rb").read()
+          print("installer entries:", len(names), "Install mode:", oct(mode))
+          PY
+          unzip -t "$OUT" >/tmp/ma-sign/unzip-test.txt
+          ls -lh "$OUT"
+
+      - name: Verify repaired artifact
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/ma-sign/recheck
+          mkdir -p /tmp/ma-sign/recheck
+          ditto -x -k "$OUT" /tmp/ma-sign/recheck
+          SETUP2=$(find /tmp/ma-sign/recheck -maxdepth 1 -name 'M&A-Setup.app' -print -quit)
+          ditto -x -k "$SETUP2/Contents/Resources/payload.zip" /tmp/ma-sign/recheck/payload
+          APP2="/tmp/ma-sign/recheck/payload/M&A Launcher.app"
+          codesign --verify --deep --strict --verbose=2 "$SETUP2"
+          codesign --verify --deep --strict --verbose=2 "$APP2"
+          test -f "$APP2/Contents/_CodeSignature/CodeResources"
+          test -f "$SETUP2/Contents/_CodeSignature/CodeResources"
+          echo "codesign verify: PASS"
+          echo "Gatekeeper (ad-hoc expected rejection):"
+          spctl -a -vvv "$SETUP2" || true
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: M-A-Setup-macOS-v2.6-signed
+          path: /tmp/ma-sign/M.A-Setup-macOS-v2.6-signed.zip
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Upload repaired assets to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUT: ${{ env.OUT }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" "$OUT" --clobber --repo "$GITHUB_REPOSITORY"
+          cp "$OUT" /tmp/ma-sign/M.A-Setup-macOS-v2.6.zip
+          gh release upload "$TAG" /tmp/ma-sign/M.A-Setup-macOS-v2.6.zip --clobber --repo "$GITHUB_REPOSITORY"
+          echo "uploaded $(basename "$OUT") and canonical v2.6 asset"
