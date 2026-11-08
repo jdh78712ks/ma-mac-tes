@@ -44,11 +44,15 @@ jobs:
           APP="/tmp/ma-sign/payload/M&A Launcher.app"
           test -d "$APP"
           xattr -cr "$APP"
-          codesign --remove-signature "$APP/Contents/MacOS/shardx-launcher" 2>/dev/null || true
-          codesign --remove-signature "$APP/Contents/MacOS/liblauncher_hook.dylib" 2>/dev/null || true
+          for f in shardx-launcher-core shardx-launcher liblauncher_hook.dylib; do
+            codesign --remove-signature "$APP/Contents/MacOS/$f" 2>/dev/null || true
+          done
+          codesign --force --sign - "$APP/Contents/MacOS/shardx-launcher-core"
           codesign --force --sign - "$APP/Contents/MacOS/liblauncher_hook.dylib"
           codesign --force --sign - "$APP/Contents/MacOS/shardx-launcher"
           codesign --force --sign - "$APP"
+          codesign -dv --verbose=4 "$APP/Contents/MacOS/shardx-launcher-core" > /tmp/ma-sign/core-signature.txt 2>&1
+          grep -q 'TeamIdentifier=not set' /tmp/ma-sign/core-signature.txt
           test -f "$APP/Contents/_CodeSignature/CodeResources"
           codesign --verify --strict --verbose=2 "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
