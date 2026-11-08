@@ -1,0 +1,185 @@
+name: macOS interactive session
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_asset:
+        description: "Release asset name"
+        required: true
+        default: "M.A-Setup-macOS-v2.6-signed.zip"
+      duration_minutes:
+        description: "How long to keep the desktop available"
+        required: true
+        default: "180"
+      vnc_password:
+        description: "VNC password (max 8 characters)"
+        required: true
+        default: "mapass12"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  session:
+    name: Interactive macOS desktop
+    runs-on: macos-15
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout harness
+        uses: actions/checkout@v4
+
+      - name: Install application payload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ZIP_ASSET: ${{ inputs.zip_asset }}
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/ma_install"
+          rm -rf "$SRC"
+          mkdir -p "$SRC"
+          gh release download --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ZIP_ASSET" --dir "$SRC" --clobber
+          ZIP_FILE="$(find "$SRC" -maxdepth 1 -name '*.zip' -print -quit)"
+          test -n "$ZIP_FILE"
+          echo "installer=$(basename "$ZIP_FILE") bytes=$(stat -f %z "$ZIP_FILE")"
+          /usr/bin/ditto -x -k "$ZIP_FILE" "$SRC/unpacked"
+          SETUP_APP="$(find "$SRC/unpacked" -maxdepth 2 -name 'M&A-Setup.app' -print -quit)"
+          test -n "$SETUP_APP"
+          PAYLOAD="$SETUP_APP/Contents/Resources/payload.zip"
+          test -f "$PAYLOAD"
+
+          sudo rm -rf "/Applications/M&A Antidetect"
+          sudo mkdir -p "/Applications/M&A Antidetect"
+          sudo /usr/bin/ditto -x -k "$PAYLOAD" "/Applications/M&A Antidetect"
+          sudo chown -R "$(id -un):$(id -gn)" "/Applications/M&A Antidetect"
+          /usr/bin/xattr -cr "/Applications/M&A Antidetect" 2>/dev/null || true
+
+          APP="/Applications/M&A Antidetect"
+          DATA="$APP/MA DATA"
+          RT="$DATA/runtime/M&A-Mac-arm64"
+          test -x "$RT/M&A.app/Contents/MacOS/ShardX"
+          test -x "$DATA/runtime/python/bin/python3"
+          chmod +x "$RT/M&A" "$RT/M&A.app/Contents/MacOS/ShardX" \
+            "$RT/M&A.app/Contents/MacOS/ShardX_core" \
+            "$DATA/runtime/python/bin/python3" \
+            "$DATA/runtime/python/bin/python3.11" 2>/dev/null || true
+          find "$APP" -type f \( -name '*.dylib' -o -name 'ShardX*' -o -name 'shardx-launcher*' \
+            -o -name 'python3*' \) -exec chmod +x {} + 2>/dev/null || true
+
+          for TARGET in \
+            "$RT/M&A.app/Contents/MacOS/ShardX" \
+            "$RT/M&A.app/Contents/MacOS/ShardX_core" \
+            "$RT/M&A.app/Contents/MacOS/libshardx_hook.dylib" \
+            "$DATA/runtime/libshardx_hook.dylib" \
+            "$DATA/runtime/python/bin/python3" \
+            "$DATA/runtime/python/bin/python3.11"; do
+            [ -e "$TARGET" ] && /usr/bin/codesign --force --sign - "$TARGET" 2>/dev/null || true
+          done
+          /usr/bin/codesign --force --deep --sign - "$RT/M&A.app" 2>/dev/null || true
+          /usr/bin/codesign --force --deep --sign - "$APP/M&A Launcher.app" 2>/dev/null || true
+          /usr/bin/xattr -cr "$APP" 2>/dev/null || true
+          echo "installed: $(ls "$APP")"
+
+      - name: Start desktop and public tunnel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VNC_PW: ${{ inputs.vnc_password }}
+          DURATION: ${{ inputs.duration_minutes }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/ma_session"
+          mkdir -p "$OUT"
+
+          # 1. Screen sharing. The runner account ships without a password, so
+          # ARD authentication has nothing to accept; give it one first.
+          sudo dscl . -passwd /Users/runner "$VNC_PW" 2>&1 || true
+          KICK="/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart"
+          sudo "$KICK" -deactivate -configure -access -off >/dev/null 2>&1 || true
+          sudo "$KICK" -configure -clientopts -setvnclegacy -vnclegacy yes \
+            -setvncpw -vncpw "$VNC_PW" >/dev/null 2>&1 || true
+          sudo "$KICK" -activate -configure -access -on -users runner -privs -all \
+            -restart -agent >/dev/null 2>&1 || true
+          sleep 6
+          lsof -nP -iTCP:5900 -sTCP:LISTEN || true
+
+          BANNER="$(nc -w 3 127.0.0.1 5900 < /dev/null 2>/dev/null | head -c 12 || true)"
+          echo "vnc_banner=$BANNER"
+          if ! printf '%s' "$BANNER" | grep -q '^RFB'; then
+            echo "::error::Screen sharing did not answer with an RFB banner on port 5900"
+            exit 3
+          fi
+
+          AUTH="$(python3 scripts/rfb_probe.py 2>/dev/null || echo 'probe=failed')"
+          echo "vnc_auth=$AUTH"
+
+          # 2. noVNC + websockify: the browser client for that VNC server.
+          git clone --depth 1 --quiet https://github.com/novnc/noVNC.git "$OUT/noVNC"
+          python3 -m venv "$OUT/venv"
+          "$OUT/venv/bin/pip" install --quiet --disable-pip-version-check websockify
+          nohup "$OUT/venv/bin/websockify" --web="$OUT/noVNC" 6080 127.0.0.1:5900 \
+            > "$OUT/websockify.log" 2>&1 &
+          sleep 3
+          curl -sS -o /dev/null -w 'novnc_http=%{http_code}\n' "http://127.0.0.1:6080/vnc.html"
+
+          # 3. Public https endpoint without an account.
+          curl -fsSL -o "$OUT/cloudflared.tgz" \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz
+          tar -xzf "$OUT/cloudflared.tgz" -C "$OUT"
+          chmod +x "$OUT/cloudflared"
+          nohup "$OUT/cloudflared" tunnel --url http://127.0.0.1:6080 --no-autoupdate \
+            > "$OUT/tunnel.log" 2>&1 &
+          URL=""
+          for _ in $(seq 1 40); do
+            URL="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' "$OUT/tunnel.log" | head -n 1 || true)"
+            [ -n "$URL" ] && break
+            sleep 2
+          done
+          if [ -z "$URL" ]; then
+            echo "::error::Cloudflare tunnel did not start"
+            tail -n 40 "$OUT/tunnel.log"
+            exit 4
+          fi
+          LINK="$URL/vnc.html?autoconnect=1&resize=scale&reconnect=1"
+          echo "SESSION_URL=$LINK"
+          echo "SESSION_URL=$LINK" >> "$GITHUB_ENV"
+
+          # 4. Launcher on screen so there is something to click.
+          caffeinate -dimsu -t $(( DURATION * 60 )) >/dev/null 2>&1 &
+          open "/Applications/M&A Antidetect/M&A Launcher.app" >/dev/null 2>&1 || true
+          sleep 8
+
+          {
+            echo "## Interactive macOS desktop"
+            echo
+            echo "[Open the desktop]($LINK)"
+            echo
+            echo "VNC password: \`$VNC_PW\`"
+            echo
+            echo "The runner is destroyed when this job ends."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if ISSUE_URL="$(gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Interactive macOS session $GITHUB_RUN_ID" \
+            --body "$LINK user=runner password=$VNC_PW auth=$AUTH" | tail -n 1)"; then
+            echo "issue=$ISSUE_URL"
+            echo "SESSION_ISSUE=${ISSUE_URL##*/}" >> "$GITHUB_ENV"
+          else
+            echo "issue creation failed; the session URL is in the log and summary"
+          fi
+
+      - name: Keep the desktop open
+        run: sleep $(( ${{ inputs.duration_minutes }} * 60 ))
+
+      - name: Close session issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -n "${SESSION_ISSUE:-}" ]; then
+            gh issue close "$SESSION_ISSUE" --repo "$GITHUB_REPOSITORY" \
+              --comment "Session ended." >/dev/null 2>&1 || true
+            gh issue delete "$SESSION_ISSUE" --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
+          fi
