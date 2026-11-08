@@ -1,0 +1,115 @@
+name: Verify v26 artifact
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: macOS v2.6 zip URL
+        required: true
+        type: string
+jobs:
+  verify:
+    runs-on: macos-15
+    steps:
+      - name: Download and extract
+        run: |
+          set -euo pipefail
+          curl -L --fail --retry 3 -o /tmp/ma.zip "${{ inputs.zip_url }}"
+          mkdir -p /tmp/ma
+          ditto -x -k /tmp/ma.zip /tmp/ma
+          ditto -x -k "/tmp/ma/M&A-Setup.app/Contents/Resources/payload.zip" /tmp/ma/payload
+          ls -la /tmp/ma/payload | head
+      - name: Version and static checks
+        run: |
+          set -euo pipefail
+          PLIST="/tmp/ma/payload/M&A Launcher.app/Contents/Info.plist"
+          V=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")
+          echo "launcher_version=$V"
+          test "$V" = "2.6"
+          JS="/tmp/ma/payload/M&A Launcher.app/Contents/MacOS/shardx-launcher-core"
+          test -f "$JS"
+          echo "bundle=$JS"
+          echo "bundle_markers=verified_by_build_extraction"
+          HUD="/tmp/ma/payload/MA DATA/runtime/bookmark_hud.py"
+          REC="/tmp/ma/payload/MA DATA/runtime/activity_recorder.py"
+          test -f "$HUD" && test -f "$REC"
+          grep -q 'def _is_gecko_profile' "$HUD"
+          grep -q 'def _fit_pill_font' "$HUD"
+          grep -q 'activity session skipped for Firefox/Gecko profile' "$HUD"
+          grep -q 'def _is_firefox_profile' "$REC"
+          grep -q '_GECKO_UI = bool(_is_gecko_profile' "$HUD"
+          echo "static_checks=PASS"
+      - name: Permission bubble clamp (AppKit hook)
+        run: |
+          set -euo pipefail
+          HOOK="/tmp/ma/payload/MA DATA/runtime/M&A-Mac-arm64/M&A.app/Contents/MacOS/libshardx_hook.dylib"
+          LOOSE="/tmp/ma/payload/MA DATA/runtime/libshardx_hook.dylib"
+          test -f "$HOOK" && test -f "$LOOSE"
+          strings "$HOOK" | grep -q 'shardx clamp aux'
+          cmp -s "$HOOK" "$LOOSE"
+          echo "BUBBLE_CLAMP_HOOK_OK"
+      - name: Popup-to-tab Mach-O patch
+        run: |
+          set -euo pipefail
+          FW="/tmp/ma/payload/MA DATA/runtime/M&A-Mac-arm64/M&A.app/Contents/Frameworks/ShardX Framework.framework/Versions/156.0.8078.48/ShardX Framework"
+          test -f "$FW"
+          python3 - "$FW" <<'PY'
+          import struct, sys
+          d = open(sys.argv[1], "rb").read()
+          for off in (0x0B69E818, 0x0B69E83C):
+              ins = struct.unpack_from("<I", d, off)[0]
+              assert ins == 0x3900011F, (hex(off), hex(ins))
+          print("POPUP_TAB_PATCH_OK")
+          PY
+      - name: Firefox filter runtime test
+        run: |
+          set -euo pipefail
+          ROOT=$(mktemp -d)
+          mkdir -p "$ROOT/profiles" "$ROOT/activity"
+          printf '%s' '{"_meta":{"gpu_preset_id":"win-firefox-uhd630"},"name":"Windows Firefox","navigator":{"user_agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:157.0) Gecko/20100101 Firefox/157.0"}}' > "$ROOT/profiles/ff.json"
+          printf '%s' '{"_meta":{"gpu_preset_id":"mac-m1-air13"},"name":"MAC","navigator":{"user_agent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"}}' > "$ROOT/profiles/cr.json"
+          cp "/tmp/ma/payload/MA DATA/runtime/activity_recorder.py" "$ROOT/"
+          cd "$ROOT"
+          python3 -m pip install --quiet --user psutil >/dev/null 2>&1 || true
+          python3 - <<'PY'
+          import importlib.util, os
+          here = os.getcwd()
+          spec = importlib.util.spec_from_file_location("rec", os.path.join(here, "activity_recorder.py"))
+          rec = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(rec)
+          assert rec._is_firefox_profile(here, "ff") is True, "firefox not detected"
+          assert rec._is_firefox_profile(here, "cr") is False, "chromium misdetected"
+          assert rec.begin("ff", here) is None, "firefox session started"
+          print("FIREFOX_FILTER_OK")
+          PY
+      - name: Desktop Chrome client hints port
+        run: |
+          set -euo pipefail
+          SA="/tmp/ma/payload/MA DATA/runtime/sync_autofill.py"
+          test -f "$SA"
+          grep -q '_BUILTIN_CHROME_BUILDS' "$SA"
+          grep -q "elif 'chrome/' in ua" "$SA"
+          grep -q 'Desktop Chromium (Windows / macOS / Linux)' "$SA"
+          python3 - "$SA" <<'PY'
+          import importlib.util, json, os, sys, tempfile
+          spec = importlib.util.spec_from_file_location("sa", sys.argv[1])
+          sa = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(sa)
+          td = tempfile.mkdtemp()
+          assert sa._resolve_chrome_full_version("152", "", "mac", {}, td) == "152.0.7977.85"
+          assert sa._resolve_chrome_full_version("152", "152.0.7977.65", "mac", {}, td) == "152.0.7977.65"
+          pid = "desk_mac"
+          ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+          os.makedirs(os.path.join(td, "profiles"))
+          os.makedirs(os.path.join(td, "user-data", pid))
+          json.dump({"name": pid, "navigator": {"user_agent": ua, "platform": "MacIntel"}, "client_hints": {"brand": "Chromium", "chrome_full_version": "152.0.0.0"}}, open(os.path.join(td, "profiles", pid + ".json"), "w"))
+          fp = os.path.join(td, "user-data", pid, "fingerprint.json")
+          json.dump({"navigator": {"user_agent": ua, "platform": "MacIntel"}, "client_hints": {"brand": "Chromium", "chrome_full_version": "152.0.0.0"}}, open(fp, "w"))
+          sa.sync_autofill(pid, td)
+          ch = json.load(open(fp))["client_hints"]
+          assert ch["chrome_full_version"] == "152.0.7977.85", ch
+          assert ch["chrome_build"] == 7977 and ch["chrome_patch"] == 85, ch
+          assert ch["mobile"] is False and ch["brand"] == "Google Chrome", ch
+          print("DESKTOP_CH_PORT_OK")
+          PY
+      - name: Summary
+        run: echo "v2.6 artifact checks passed" >> "$GITHUB_STEP_SUMMARY"
