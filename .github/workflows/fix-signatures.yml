@@ -58,6 +58,23 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$APP"
           codesign -dv --verbose=4 "$APP" 2>&1 | tee /tmp/ma-sign/launcher-signature.txt
 
+      - name: Re-sign Python runtime
+        run: |
+          set -euo pipefail
+          PY="/tmp/ma-sign/payload/MA DATA/runtime/python/bin/python3.11"
+          test -x "$PY"
+          codesign -dv --verbose=4 "$PY" > /tmp/ma-sign/python-before.txt 2>&1 || true
+          # The bundled interpreter is linker-signed: it has no CMS blob, so
+          # AMFI rejects it even though it can still execute.  Removing the
+          # old signature first lets codesign write a complete ad-hoc blob.
+          codesign --remove-signature "$PY" 2>/dev/null || true
+          codesign --force --sign - "$PY"
+          codesign -dv --verbose=4 "$PY" > /tmp/ma-sign/python-signature.txt 2>&1
+          codesign --verify --strict --verbose=2 "$PY"
+          grep -q 'flags=0x2(adhoc)' /tmp/ma-sign/python-signature.txt
+          ! grep -q 'linker-signed' /tmp/ma-sign/python-signature.txt
+          "$PY" -c 'import sys; print(sys.version); print("PY_SIGN_OK")'
+
       - name: Rebuild payload.zip
         run: |
           set -euo pipefail
