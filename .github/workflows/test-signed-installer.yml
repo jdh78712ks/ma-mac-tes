@@ -1,0 +1,101 @@
+name: Test signed macOS installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: "Direct URL of the repaired M.A-Setup-macOS-v2.6-signed.zip"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  launch:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - name: Download, extract and verify signatures
+        env:
+          ZIP_URL: ${{ inputs.zip_url }}
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/ma-live
+          mkdir -p /tmp/ma-live/outer
+          curl -L --fail --retry 5 --retry-delay 3 -o /tmp/ma-live/setup.zip "$ZIP_URL"
+          ditto -x -k /tmp/ma-live/setup.zip /tmp/ma-live/outer
+          SETUP=$(find /tmp/ma-live/outer -maxdepth 1 -name 'M&A-Setup.app' -print -quit)
+          test -n "$SETUP"
+          echo "SETUP=$SETUP" >> "$GITHUB_ENV"
+          xattr -cr "$SETUP"
+          test -f "$SETUP/Contents/_CodeSignature/CodeResources"
+          codesign --verify --deep --strict --verbose=2 "$SETUP" 2>&1 | tee /tmp/ma-live/setup-verify-before.txt
+          echo "setup_codesign_before=PASS"
+          spctl -a -vvv "$SETUP" > /tmp/ma-live/setup-spctl.txt 2>&1 || true
+
+      - name: Install repaired app (no re-signing)
+        run: |
+          set +e
+          SETUP=$(find /tmp/ma-live/outer -maxdepth 1 -name 'M&A-Setup.app' -print -quit)
+          test -n "$SETUP"
+          chmod +x "$SETUP/Contents/MacOS/M&A-Setup"
+          sudo "$SETUP/Contents/MacOS/M&A-Setup" --cli > /tmp/ma-live/install.log 2>&1
+          echo $? > /tmp/ma-live/install.status
+          sleep 3
+          set -e
+          echo "install_exit=$(cat /tmp/ma-live/install.status)"
+          ls -la "/Applications/M&A Antidetect" > /tmp/ma-live/app-tree.txt 2>&1 || true
+          APP="/Applications/M&A Antidetect/M&A Launcher.app"
+          test -d "$APP"
+          test -f "$APP/Contents/_CodeSignature/CodeResources"
+          codesign --verify --deep --strict --verbose=2 "$APP" > /tmp/ma-live/launcher-verify.txt 2>&1
+          echo "launcher_codesign=PASS"
+
+      - name: Launch and capture AMFI diagnostics
+        if: always()
+        run: |
+          set +e
+          APP="/Applications/M&A Antidetect/M&A Launcher.app"
+          codesign -dv --verbose=4 "$APP" > /tmp/ma-live/launcher-codesign.txt 2>&1 || true
+          codesign --verify --deep --strict --verbose=4 "$APP" > /tmp/ma-live/launcher-verify-deep.txt 2>&1 || true
+
+          xattr -cr "/Applications/M&A Antidetect" 2>/dev/null || true
+          open "$APP" > /tmp/ma-live/open.txt 2>&1
+          echo "open_exit=$?" >> /tmp/ma-live/open.txt
+          sleep 12
+
+          ps -axo pid,ppid,comm,args | grep -E 'shardx-launcher|M&A Launcher' | grep -v grep > /tmp/ma-live/processes.txt 2>&1 || true
+          cat /tmp/ma-live/processes.txt
+          if grep -qE 'shardx-launcher' /tmp/ma-live/processes.txt; then
+            echo "launch_status=RUNNING" | tee /tmp/ma-live/launch-status.txt
+            STATUS=0
+          else
+            echo "launch_status=NOT_RUNNING" | tee /tmp/ma-live/launch-status.txt
+            STATUS=1
+          fi
+
+          sudo log show --last 5m --style compact \
+            --predicate 'eventMessage CONTAINS[c] "AMFI" OR eventMessage CONTAINS[c] "code signature" OR process == "amfid"' \
+            > /tmp/ma-live/amfi.log 2>&1 || true
+          grep -iE 'AMFI|amfid|code signature|killing|execve' /tmp/ma-live/amfi.log > /tmp/ma-live/amfi-filtered.txt 2>&1 || true
+          sudo dmesg 2>/dev/null | tail -200 > /tmp/ma-live/dmesg.log || true
+
+          REPORT_DIR="$HOME/Library/Logs/DiagnosticReports"
+          if [ -d "$REPORT_DIR" ]; then
+            find "$REPORT_DIR" -maxdepth 1 -type f -mmin -15 -print -exec sh -c 'echo "===== $1 ====="; sed -n "1,80p" "$1"' _ {} \; \
+              > /tmp/ma-live/crash-reports.txt 2>&1 || true
+          fi
+
+          screencapture -x /tmp/ma-live/launcher.png 2>/tmp/ma-live/screenshot.err || true
+          sips -g pixelWidth -g pixelHeight /tmp/ma-live/launcher.png > /tmp/ma-live/screenshot-info.txt 2>&1 || true
+          echo "launch_exit=$STATUS"
+          exit "$STATUS"
+
+      - name: Upload live diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ma-live-launch-diagnostics
+          path: /tmp/ma-live
+          if-no-files-found: warn
