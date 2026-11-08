@@ -63,7 +63,7 @@ jobs:
           import zipfile
           p = "/tmp/ma-sign/payload.zip"
           with zipfile.ZipFile(p) as z:
-              names = set(z.namelist())
+              names = {n.rstrip("/") for n in z.namelist()}
               required = {
                   "M&A Launcher.app/Contents/Info.plist",
                   "M&A Launcher.app/Contents/MacOS/shardx-launcher",
